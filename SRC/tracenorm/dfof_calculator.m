@@ -123,7 +123,7 @@ function stats = calculate_dfof_stats(raw_data, baseline, dfof_data, config)
     
     % === Quality Flags ===
     stats.quality_flags = struct();
-    stats.quality_flags.low_snr = snr < 2;                           % SNR < 2
+    stats.quality_flags.low_snr = snr_values < 2;                           % SNR < 2
     stats.quality_flags.unstable_baseline = baseline_stability > 0.2; % CV > 20%
     stats.quality_flags.low_signal = dynamic_range < 0.1;            % Small dynamic range
     stats.quality_flags.invalid_data = fraction_valid_per_roi < 0.8;  % <80% valid data

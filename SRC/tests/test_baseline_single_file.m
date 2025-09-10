@@ -11,7 +11,7 @@ clear; clc; close all;
 
 %% === Configuration ===
 % UPDATE THIS PATH to point to your test CSV file
-test_file = 'path/to/your/test_file.csv';  % CHANGE THIS
+test_file = "D:\Data\GluSnFR\Ms\2025-06-17_Ms-Hipp_DIV13_Doc2b_pilot_resave\iglusnfr4f_NGR\Spont\GPU_SNR_Processed\5_raw_mean\CP_Snfr4-NGR_Doc2b-R213W_Cs1-c1_spont-01_mean.csv";  % CHANGE THIS
 
 % Test options
 test_options = struct();

@@ -90,8 +90,19 @@ function results = main_pipeline(folder, options)
         results.metadata = metadataArray;
         results.errors = processingErrors;
         
-        % Create summary statistics
-        results.summary = createSummaryStats(fileResults, metadataArray, loadTime, processTime);
+        % Create summary statistics with error handling
+        try
+            results.summary = createSummaryStats(fileResults, metadataArray, loadTime, processTime);
+        catch ME
+            warning('Failed to create summary statistics: %s', ME.message);
+            % Create minimal summary if creation fails
+            results.summary = struct();
+            results.summary.totalFiles = length(metadataArray);
+            results.summary.validFiles = length(fileResults);
+            results.summary.failedFiles = results.summary.totalFiles - results.summary.validFiles;
+            results.summary.data = struct('totalROIs', 0, 'totalSize_MB', 0, 'avgROIsPerFile', 0, 'roiRange', [0, 0]);
+            results.summary.timing = struct('loadTime_s', loadTime, 'processTime_s', processTime, 'totalTime_s', loadTime + processTime);
+        end
         
         if options.verbose
             printSummary(results.summary, results.errors);

@@ -86,7 +86,7 @@ function fig = create_trace_overview(raw_data, baseline, dfof_data, outlier_mask
         outlier_points = outlier_mask(:, roi_idx);
         if any(outlier_points)
             scatter(time_vector(outlier_points), raw_data(outlier_points, roi_idx), ...
-                30, 'o', 'MarkerFaceColor', 'orange', 'MarkerEdgeColor', 'orange', ...
+                30, 'o', 'MarkerFaceColor', [1 0.5 0], 'MarkerEdgeColor', [1 0.5 0], ...
                 'DisplayName', 'Outliers');
         end
         
@@ -316,10 +316,10 @@ function fig = create_outlier_summary(outlier_mask, stats, time_vector, metadata
         'FontSize', 14, 'FontWeight', 'bold');
 end
 
-function fig = create_transport_plots(raw_data, baseline, stats, time_vector, metadata, config)
+function fig = create_transport_plots(raw_data, baseline, baseline_stats, time_vector, metadata, config)
     % Show transport ROI detection results
     
-    transport_indices = find(stats.transport_rois);
+    transport_indices = find(baseline_stats.transport_rois);
     if isempty(transport_indices)
         fig = [];
         return;
@@ -347,13 +347,13 @@ function fig = create_transport_plots(raw_data, baseline, stats, time_vector, me
         
         xlabel('Time (s)');
         ylabel('Fluorescence');
-        title(sprintf('Transport ROI %d (slope=%.3f)', roi_idx, stats.transport_slopes(roi_idx)));
+        title(sprintf('Transport ROI %d (slope=%.3f)', roi_idx, baseline_stats.transport_slopes(roi_idx)));
         legend('Location', 'best');
         grid on;
     end
     
     sgtitle(sprintf('Transport ROI Detection - %s (%d found)', ...
-        metadata.filename, stats.num_transport_rois), ...
+        metadata.filename, baseline_stats.num_transport_rois), ...
         'FontSize', 14, 'FontWeight', 'bold');
 end
 
