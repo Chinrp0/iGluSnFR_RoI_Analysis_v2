@@ -134,8 +134,10 @@ function [fileResults, errors] = processFilesIndividually(dataCell, metadataArra
             data = dataCell{i};          % [1200 x N_ROIs] matrix
             metadata = metadataArray(i); % File metadata
             
-            if options.verbose && mod(i, 2) == 0  % Progress every 2 files
+            if options.verbose && numFiles > 1 && mod(i, 2) == 0  % Progress every 2 files in batch mode
                 fprintf('    Processing file %d/%d (%s)\n', i, numFiles, metadata.filename);
+            elseif options.verbose && numFiles == 1  % Always show for single file
+                fprintf('    Processing file: %s\n', metadata.filename);
             end
             
             % Process this file
