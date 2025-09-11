@@ -1,14 +1,6 @@
 function [event_mask, event_stats] = schmitt_event_detector(dfof_data, config)
-    % SCHMITT_EVENT_DETECTOR - Detect events using Schmitt trigger thresholding
-    % Implements hysteresis-based event detection with sensor kinetics extension
-    %
-    % Inputs:
-    %   dfof_data - [frames x ROIs] normalized dF/F traces
-    %   config    - Configuration struct from tracenorm_config()
-    %
-    % Outputs:
-    %   event_mask  - [frames x ROIs] logical mask of detected events
-    %   event_stats - Struct with event detection statistics
+    % SCHMITT_EVENT_DETECTOR - Fixed version with consistent data structure
+    % Now ensures event_mask is properly included in event_stats
     
     if nargin < 2
         config = tracenorm_config();
@@ -19,10 +11,10 @@ function [event_mask, event_stats] = schmitt_event_detector(dfof_data, config)
     % Get Schmitt trigger parameters from config
     if ~isfield(config, 'event_detection')
         % Default parameters
-        upper_threshold_sigma = 3.0;    % Upper threshold (event start)
-        lower_threshold_sigma = 1.5;    % Lower threshold (event end)
-        decay_extension_frames = 3;     % Extend events by decay time (75ms = 3 frames)
-        rise_extension_frames = 1;      % Extend events before start (conservative)
+        upper_threshold_sigma = 3.0;
+        lower_threshold_sigma = 1.5;
+        decay_extension_frames = 3;
+        rise_extension_frames = 1;
     else
         upper_threshold_sigma = config.event_detection.upper_threshold_sigma;
         lower_threshold_sigma = config.event_detection.lower_threshold_sigma;
@@ -68,6 +60,9 @@ function [event_mask, event_stats] = schmitt_event_detector(dfof_data, config)
     
     %% === Calculate Event Statistics ===
     event_stats = calculate_event_statistics(event_mask, dfof_data, upper_threshold, lower_threshold, config);
+    
+    % CRITICAL FIX: Ensure event_mask is included in event_stats
+    event_stats.event_mask = event_mask;
     
     if config.verbose
         fprintf('  Detected %d total events across %d ROIs\n', ...
@@ -154,14 +149,14 @@ function stats = calculate_event_statistics(event_mask, dfof_data, upper_thresho
     [numFrames, numROIs] = size(event_mask);
     
     %% === Basic Event Counts ===
-    events_per_roi = sum(event_mask, 1);  % Total event frames per ROI
-    rois_with_events = sum(events_per_roi > 0);
+    event_frames_per_roi = sum(event_mask, 1);  % Total event frames per ROI
+    rois_with_events = sum(event_frames_per_roi > 0);
     total_event_frames = sum(event_mask, 'all');
     
     %% === Event Characteristics ===
     event_durations = [];
     event_amplitudes = [];
-    event_count_per_roi = zeros(1, numROIs);
+    events_per_roi = zeros(1, numROIs);  % FIXED: Discrete events per ROI
     
     for roi = 1:numROIs
         roi_events = event_mask(:, roi);
@@ -172,7 +167,7 @@ function stats = calculate_event_statistics(event_mask, dfof_data, upper_thresho
             event_starts = find(diff([false; roi_events]) == 1);
             event_ends = find(diff([roi_events; false]) == -1);
             
-            event_count_per_roi(roi) = length(event_starts);
+            events_per_roi(roi) = length(event_starts);  % Count discrete events
             
             % Calculate duration and amplitude for each event
             for e = 1:length(event_starts)
@@ -193,25 +188,15 @@ function stats = calculate_event_statistics(event_mask, dfof_data, upper_thresho
         end
     end
     
-    %% === Threshold Effectiveness ===
-    % Check what fraction of detected events actually exceeded thresholds
-    peak_amplitudes_per_roi = zeros(1, numROIs);
-    for roi = 1:numROIs
-        if events_per_roi(roi) > 0
-            roi_events = event_mask(:, roi);
-            peak_amplitudes_per_roi(roi) = max(dfof_data(roi_events, roi), [], 'omitnan');
-        end
-    end
-    
-    %% === Compile Statistics ===
+    %% === Compile Statistics with CONSISTENT naming ===
     stats = struct();
     
-    % Basic counts
-    stats.total_events = sum(event_count_per_roi);  % Number of discrete events
-    stats.total_event_frames = total_event_frames;   % Total frames marked as events
+    % FIXED: Consistent variable names
+    stats.total_events = sum(events_per_roi);           % Total discrete events
+    stats.total_event_frames = total_event_frames;      % Total frames marked as events
     stats.rois_with_events = rois_with_events;
-    stats.events_per_roi = event_count_per_roi;      % Discrete events per ROI
-    stats.event_frames_per_roi = events_per_roi;     % Event frames per ROI
+    stats.events_per_roi = events_per_roi;              % Discrete events per ROI
+    stats.event_frames_per_roi = event_frames_per_roi;  % Event frames per ROI
     
     % Event characteristics
     if ~isempty(event_durations)
@@ -244,13 +229,13 @@ function stats = calculate_event_statistics(event_mask, dfof_data, upper_thresho
     stats.fraction_rois_with_events = rois_with_events / numROIs;
     stats.fraction_frames_in_events = total_event_frames / numel(event_mask);
     
-    % Summary for integration with existing code
+    % FIXED: Backward compatibility structure
     stats.event_summary = struct();
     stats.event_summary.rois_with_events = rois_with_events;
     stats.event_summary.total_events = stats.total_events;
     stats.event_summary.fraction_active_rois = stats.fraction_rois_with_events;
     if rois_with_events > 0
-        stats.event_summary.mean_events_per_active_roi = mean(event_count_per_roi(event_count_per_roi > 0));
+        stats.event_summary.mean_events_per_active_roi = mean(events_per_roi(events_per_roi > 0));
     else
         stats.event_summary.mean_events_per_active_roi = 0;
     end

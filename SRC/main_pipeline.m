@@ -176,12 +176,12 @@ function [fileResults, errors] = processFilesWithBaseline(dataCell, metadataArra
 end
 
 function fileResult = processSingleFileWithBaseline(data, metadata, options)
-    % UPDATED VERSION: Uses new modular event detection
-    % REPLACE this function in your existing main_pipeline.m
+    % FIXED VERSION: Consistent data flow between modules
+    % Ensures all modules receive properly structured data
     
     [numFrames, numROIs] = size(data);
     
-    % Load configuration (now includes Schmitt trigger parameters)
+    % Load configuration
     config = tracenorm_config();
     config.verbose = options.verbose && numROIs > 2000;
     
@@ -190,51 +190,79 @@ function fileResult = processSingleFileWithBaseline(data, metadata, options)
             numROIs, numel(data) * 4 / (1024^2));
     end
     
-    %% === Baseline Calculation (unchanged) ===
+    %% === Baseline Calculation ===
     try
         tic;
         [baseline, outlier_mask, baseline_stats] = baseline_detector(data, config);
         baseline_time = toc;
+        
+        if config.verbose
+            fprintf('      Baseline: %.3f s, %.1f%% outliers detected\n', ...
+                baseline_time, 100 * baseline_stats.mean_outlier_fraction);
+        end
     catch ME
         error('Baseline calculation failed: %s', ME.message);
     end
     
-    %% === dF/F Calculation (updated - no event detection) ===
+    %% === dF/F Calculation ===
     try
         tic;
         [dfof_data, dfof_stats] = dfof_calculator(data, baseline, config);
         dfof_time = toc;
+        
+        if config.verbose
+            fprintf('      dF/F: %.3f s, mean SNR = %.2f\n', ...
+                dfof_time, dfof_stats.mean_snr);
+        end
     catch ME
         error('dF/F calculation failed: %s', ME.message);
     end
     
-    %% === Event Detection (NEW - Schmitt trigger) ===
+    %% === Event Detection with Schmitt Trigger ===
     try
         tic;
         [event_mask, event_stats] = schmitt_event_detector(dfof_data, config);
         event_time = toc;
+        
+        % CRITICAL FIX: Ensure event_mask is properly included
+        if ~isfield(event_stats, 'event_mask')
+            event_stats.event_mask = event_mask;
+        end
+        
+        if config.verbose
+            fprintf('      Events: %.3f s, %d events across %d ROIs\n', ...
+                event_time, event_stats.total_events, event_stats.rois_with_events);
+        end
     catch ME
         error('Event detection failed: %s', ME.message);
     end
     
-    %% === Quality Assessment (NEW - comprehensive) ===
+    %% === Quality Assessment ===
     try
         tic;
         quality_metrics = quality_assessor(data, baseline_stats, dfof_stats, event_stats, config);
         quality_time = toc;
+        
+        if config.verbose
+            fprintf('      Quality: %.3f s, %d active ROIs (%.1f%%)\n', ...
+                quality_time, quality_metrics.summary.active_rois, ...
+                100 * quality_metrics.summary.fraction_active);
+        end
     catch ME
-        error('Quality assessment failed: %s', ME.message);
+        warning('Quality assessment failed: %s', ME.message);
+        % Create minimal quality metrics for backward compatibility
+        quality_metrics = create_minimal_quality_metrics(baseline_stats, dfof_stats, event_stats);
+        quality_time = 0;
     end
     
-    %% === Visualization (updated to handle events) ===
+    %% === Visualization ===
     plot_handles = [];
     plot_time = 0;
     
     if options.createPlots
         try
             tic;
-            % Use existing baseline_plotter (it should still work)
-            % or create enhanced version that shows events
+            % FIXED: Pass all required arguments with consistent data structure
             plot_handles = baseline_plotter(data, baseline, dfof_data, outlier_mask, ...
                 baseline_stats, dfof_stats, metadata, config, event_stats);
             plot_time = toc;
@@ -242,77 +270,152 @@ function fileResult = processSingleFileWithBaseline(data, metadata, options)
             if options.savePlots
                 save_baseline_plots(plot_handles, metadata, options);
             end
+            
+            if config.verbose
+                fprintf('      Plots: %.3f s, %d figures created\n', ...
+                    plot_time, length(fieldnames(plot_handles)));
+            end
         catch ME
             warning('Plotting failed: %s', ME.message);
-            if options.verbose
+            if config.verbose
                 fprintf('      Skipping plots due to error: %s\n', ME.message);
+                % Show more detailed error info
+                if ~isempty(ME.stack)
+                    fprintf('        Error in: %s (line %d)\n', ME.stack(1).name, ME.stack(1).line);
+                end
             end
             plot_handles = [];
             plot_time = 0;
         end
     end
     
-    %% === Compile Results (updated structure) ===
+    %% === Compile Results with CONSISTENT structure ===
     fileResult = struct();
     
-    % Basic info (unchanged)
+    % Basic info
     fileResult.filename = metadata.filename;
     fileResult.numFrames = numFrames;
     fileResult.numROIs = numROIs;
     fileResult.dataSize_MB = numel(data) * 4 / (1024^2);
     
-    % Results (updated with new modules)
+    % Core results
     fileResult.baseline = baseline;
     fileResult.outlier_mask = outlier_mask;
     fileResult.baseline_stats = baseline_stats;
     fileResult.dfof_data = dfof_data;
     fileResult.dfof_stats = dfof_stats;
     
-    % NEW: Event detection results
+    % FIXED: Event detection results with consistent naming
     fileResult.event_mask = event_mask;
     fileResult.event_stats = event_stats;
     
-    % NEW: Comprehensive quality metrics  
+    % FIXED: Quality metrics
     fileResult.quality_metrics = quality_metrics;
     
-    % Timing (updated)
+    % Timing information
     fileResult.timing = struct();
     fileResult.timing.baseline_time = baseline_time;
     fileResult.timing.dfof_time = dfof_time;
-    fileResult.timing.event_time = event_time;        % NEW
-    fileResult.timing.quality_time = quality_time;    % NEW
+    fileResult.timing.event_time = event_time;
+    fileResult.timing.quality_time = quality_time;
     fileResult.timing.plot_time = plot_time;
     fileResult.timing.total_time = baseline_time + dfof_time + event_time + quality_time + plot_time;
     
     % Visualization
     fileResult.plot_handles = plot_handles;
     
-    % Summary metrics (for backward compatibility with existing code)
+    % FIXED: Summary metrics (for backward compatibility)
     fileResult.quality = struct();
     fileResult.quality.fraction_good_baseline = getFieldSafe(baseline_stats, 'fraction_good_rois', 0);
     fileResult.quality.fraction_good_dfof = getFieldSafe(quality_metrics, 'fraction_good_rois', 0);
     fileResult.quality.mean_snr = getFieldSafe(dfof_stats, 'mean_snr', 0);
     fileResult.quality.transport_rois = getFieldSafe(baseline_stats, 'num_transport_rois', 0);
     
-    % NEW: Enhanced quality metrics
+    % FIXED: Enhanced quality metrics with consistent naming
     fileResult.quality.active_rois = getFieldSafe(quality_metrics.summary, 'active_rois', 0);
     fileResult.quality.total_events = getFieldSafe(event_stats, 'total_events', 0);
     fileResult.quality.mean_event_amplitude = getFieldSafe(event_stats, 'mean_event_amplitude', 0);
     
     if options.verbose && (fileResult.quality.transport_rois > 0 || fileResult.quality.active_rois > 0)
-        fprintf('      Results: %d transport ROIs, %d active ROIs, %d total events, SNR=%.2f\n', ...
+        fprintf('      Final Results: %d transport, %d active ROIs, %d events, SNR=%.2f\n', ...
             fileResult.quality.transport_rois, fileResult.quality.active_rois, ...
             fileResult.quality.total_events, fileResult.quality.mean_snr);
     end
 end
 
-% Keep this helper function (unchanged)
+function quality_metrics = create_minimal_quality_metrics(baseline_stats, dfof_stats, event_stats)
+    % Create minimal quality metrics when full assessment fails
+    
+    quality_metrics = struct();
+    
+    % Basic summary
+    quality_metrics.summary = struct();
+    quality_metrics.summary.active_rois = getFieldSafe(event_stats, 'rois_with_events', 0);
+    quality_metrics.summary.total_rois = size(dfof_stats.dfof_mean, 2);
+    quality_metrics.summary.fraction_active = quality_metrics.summary.active_rois / quality_metrics.summary.total_rois;
+    
+    % Backward compatibility
+    quality_metrics.fraction_good_rois = getFieldSafe(baseline_stats, 'fraction_good_rois', 0);
+    quality_metrics.num_low_quality = 0;
+end
+
 function value = getFieldSafe(structure, fieldName, defaultValue)
-    % Safely get field value with default fallback
-    if isfield(structure, fieldName)
-        value = structure.(fieldName);
+    % Safely get field value with default fallback - handles nested fields
+    
+    if contains(fieldName, '.')
+        % Handle nested field access (e.g., 'summary.active_rois')
+        field_parts = split(fieldName, '.');
+        current_struct = structure;
+        
+        for i = 1:length(field_parts)
+            if isfield(current_struct, field_parts{i})
+                current_struct = current_struct.(field_parts{i});
+            else
+                value = defaultValue;
+                return;
+            end
+        end
+        value = current_struct;
     else
-        value = defaultValue;
+        % Handle simple field access
+        if isfield(structure, fieldName)
+            value = structure.(fieldName);
+        else
+            value = defaultValue;
+        end
+    end
+end
+
+function save_baseline_plots(plot_handles, metadata, options)
+    % Save baseline validation plots to files
+    
+    if isempty(plot_handles)
+        return;
+    end
+    
+    try
+        [~, filename_base, ~] = fileparts(metadata.filename);
+        output_dir = fullfile('baseline_plots', filename_base);
+        if ~exist(output_dir, 'dir')
+            mkdir(output_dir);
+        end
+        
+        plot_names = fieldnames(plot_handles);
+        for i = 1:length(plot_names)
+            plot_name = plot_names{i};
+            fig_handle = plot_handles.(plot_name);
+            
+            if ishandle(fig_handle)
+                output_file = fullfile(output_dir, sprintf('%s_%s.png', filename_base, plot_name));
+                saveas(fig_handle, output_file, 'png');
+                
+                if options.verbose
+                    fprintf('        Saved: %s\n', output_file);
+                end
+            end
+        end
+    catch ME
+        warning('Failed to save plots: %s', ME.message);
     end
 end
 
@@ -403,39 +506,6 @@ function summary = createSummaryStats(fileResults, metadataArray, loadTime, proc
     catch ME
         warning('Error creating detailed summary: %s', E.message);
         summary = createMinimalSummary(fileResults, metadataArray, loadTime, processTime);
-    end
-end
-
-function save_baseline_plots(plot_handles, metadata, options)
-    % Save baseline validation plots to files
-    
-    if isempty(plot_handles)
-        return;
-    end
-    
-    try
-        [~, filename_base, ~] = fileparts(metadata.filename);
-        output_dir = fullfile('baseline_plots', filename_base);
-        if ~exist(output_dir, 'dir')
-            mkdir(output_dir);
-        end
-        
-        plot_names = fieldnames(plot_handles);
-        for i = 1:length(plot_names)
-            plot_name = plot_names{i};
-            fig_handle = plot_handles.(plot_name);
-            
-            if ishandle(fig_handle)
-                output_file = fullfile(output_dir, sprintf('%s_%s.png', filename_base, plot_name));
-                saveas(fig_handle, output_file, 'png');
-                
-                if options.verbose
-                    fprintf('        Saved: %s\n', output_file);
-                end
-            end
-        end
-    catch ME
-        warning('Failed to save plots: %s', E.message);
     end
 end
 
