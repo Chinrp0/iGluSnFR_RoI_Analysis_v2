@@ -1,9 +1,7 @@
-function plot_handles = baseline_plotter(raw_data, baseline, dfof_data, outlier_mask, baseline_stats, dfof_stats, metadata, config, event_stats)
-    % BASELINE_PLOTTER - Fixed version with 2x4 layout and peak markers
-    % Shows dF/F traces with Schmitt trigger markers above event peaks
-    %
-    % STANDARDIZED LAYOUT: All figures use 2 columns x 4 rows (8 subplots)
-    % PEAK MARKERS: Triangular markers positioned above event peak amplitudes
+function plot_handles = baseline_plotter_clean(raw_data, baseline, dfof_data, outlier_mask, baseline_stats, dfof_stats, metadata, config, event_stats)
+    % BASELINE_PLOTTER_CLEAN - Version without peak markers
+    % Red highlighted events are sufficient for visualization
+    % Maintains 2x4 layout as requested
     
     % Handle backward compatibility
     if nargin < 9
@@ -11,7 +9,7 @@ function plot_handles = baseline_plotter(raw_data, baseline, dfof_data, outlier_
         fprintf('Warning: No event_stats provided, using empty event data\n');
     end
     
-    % FIXED: Extract event_mask consistently
+    % Extract event_mask consistently
     if isfield(event_stats, 'event_mask')
         event_mask = event_stats.event_mask;
     else
@@ -24,31 +22,31 @@ function plot_handles = baseline_plotter(raw_data, baseline, dfof_data, outlier_
     
     plot_handles = struct();
     
-    fprintf('Creating standardized 2x4 event plots for %s...\n', metadata.filename);
+    fprintf('Creating clean event plots (no peak markers) for %s...\n', metadata.filename);
     
-    %% === Plot 1: dF/F Traces with Peak Markers (2x4 layout) ===
-    plot_handles.event_traces = create_standardized_event_traces(dfof_data, event_mask, event_stats, ...
+    %% === Plot 1: Clean dF/F Traces (2x4 layout) ===
+    plot_handles.event_traces = create_clean_event_traces(dfof_data, event_mask, event_stats, ...
         time_vector, metadata, config);
     
     %% === Plot 2: Event Detection Summary ===
     plot_handles.event_summary = create_event_summary(event_stats, metadata, config);
     
     %% === Plot 3: Most Active ROIs (2x4 layout) ===
-    plot_handles.active_rois = create_active_roi_examples(dfof_data, event_mask, event_stats, ...
+    plot_handles.active_rois = create_clean_active_roi_examples(dfof_data, event_mask, event_stats, ...
         time_vector, metadata, config);
     
-    fprintf('  Created %d standardized plots (2x4 layout)\n', length(fieldnames(plot_handles)));
+    fprintf('  Created %d clean plots (2x4 layout, no peak markers)\n', length(fieldnames(plot_handles)));
 end
 
-function fig = create_standardized_event_traces(dfof_data, event_mask, event_stats, time_vector, metadata, config)
-    % FIXED: Standardized 2x4 layout with peak markers above events
+function fig = create_clean_event_traces(dfof_data, event_mask, event_stats, time_vector, metadata, config)
+    % CLEAN: 2x4 layout with red events, NO peak markers
     
     [numFrames, numROIs] = size(dfof_data);
     
     % Select 8 representative ROIs for 2x4 layout
     sample_rois = select_diverse_rois(event_stats, 8);
     
-    fig = figure('Name', sprintf('dF/F Traces with Schmitt Events - %s', metadata.filename), ...
+    fig = figure('Name', sprintf('dF/F Traces with Events (Clean) - %s', metadata.filename), ...
         'Position', [100, 100, 1000, 1200]);  % Optimized for 2x4 layout
     
     % STANDARDIZED: 2 columns x 4 rows = 8 subplots
@@ -65,24 +63,14 @@ function fig = create_standardized_event_traces(dfof_data, event_mask, event_sta
         plot(time_vector, trace, 'k-', 'LineWidth', 1.0);
         hold on;
         
-        % Highlight detected events
+        % Highlight detected events in red (NO PEAK MARKERS)
         if size(event_mask, 2) >= roi_idx
             events = event_mask(:, roi_idx);
             if any(events)
-                % Highlight event periods in red
+                % Only highlight event periods in red - no additional markers
                 event_trace = trace;
                 event_trace(~events) = NaN;
-                plot(time_vector, event_trace, 'r-', 'LineWidth', 2.0);
-                
-                % FIXED: Add peak markers ABOVE event peaks
-                event_peaks = find_event_peaks_in_mask(trace, events);
-                if ~isempty(event_peaks.frames)
-                    % Position markers above peak amplitude
-                    marker_height = event_peaks.amplitudes + 0.02 * range(trace, 'omitnan');
-                    scatter(time_vector(event_peaks.frames), marker_height, 60, '^', ...
-                        'MarkerFaceColor', [0 0.8 0], 'MarkerEdgeColor', [0 0.6 0], ...
-                        'LineWidth', 1.5);
-                end
+                plot(time_vector, event_trace, 'r-', 'LineWidth', 2.5);
             end
         end
         
@@ -98,31 +86,41 @@ function fig = create_standardized_event_traces(dfof_data, event_mask, event_sta
         % Add zero reference
         yline(0, 'k:', 'Alpha', 0.5, 'LineWidth', 0.8);
         
-        % Get event count
+        % Get event count and noise info
         if isfield(event_stats, 'events_per_roi') && length(event_stats.events_per_roi) >= roi_idx
             num_events = event_stats.events_per_roi(roi_idx);
         else
             num_events = 0;
         end
         
-        max_dfof = max(trace, [], 'omitnan');
+        % Get noise level if available
+        if isfield(event_stats, 'noise_metrics') && isfield(event_stats.noise_metrics, 'noise_std')
+            noise_level = event_stats.noise_metrics.noise_std(roi_idx);
+            method_used = event_stats.noise_metrics.noise_method{roi_idx};
+            snr = event_stats.noise_metrics.signal_quality(roi_idx);
+            
+            title_text = sprintf('ROI %d: %d events, σ=%.5f\nSNR=%.1f (%s)', ...
+                roi_idx, num_events, noise_level, snr, method_used);
+        else
+            max_dfof = max(trace, [], 'omitnan');
+            title_text = sprintf('ROI %d: %d events, max=%.3f', roi_idx, num_events, max_dfof);
+        end
         
         xlabel('Time (s)', 'FontSize', 10);
         ylabel('dF/F', 'FontSize', 10);
-        title(sprintf('ROI %d: %d events, max=%.3f', roi_idx, num_events, max_dfof), ...
-            'FontSize', 11, 'FontWeight', 'bold');
+        title(title_text, 'FontSize', 10, 'FontWeight', 'bold');
         grid on; grid minor;
         
-        % Set consistent y-limits
+        % Set consistent y-limits (less margin since no peak markers)
         y_range = [min(trace, [], 'omitnan'), max(trace, [], 'omitnan')];
         if diff(y_range) > 0
-            y_margin = diff(y_range) * 0.2;  % More margin for peak markers
+            y_margin = diff(y_range) * 0.15;  % Reduced margin
             ylim([y_range(1) - y_margin, y_range(2) + y_margin]);
         end
         
         % Add legend only to first subplot
         if i == 1 && any(event_mask(:, roi_idx))
-            legend('dF/F', 'Events', 'Peak Markers', 'Upper (3.0σ)', 'Lower (1.5σ)', ...
+            legend('dF/F', 'Events', 'Upper (3.0σ)', 'Lower (1.5σ)', ...
                 'Location', 'best', 'FontSize', 9);
         elseif i == 1
             legend('dF/F', 'Upper (3.0σ)', 'Lower (1.5σ)', ...
@@ -135,12 +133,12 @@ function fig = create_standardized_event_traces(dfof_data, event_mask, event_sta
         total_events = event_stats.total_events;
     end
     
-    sgtitle(sprintf('Baseline-Corrected Traces with Schmitt Trigger Events\n%s (%d total events)', ...
+    sgtitle(sprintf('Clean Event Detection - Red Highlights Only\n%s (%d total events)', ...
         metadata.filename, total_events), 'FontSize', 14, 'FontWeight', 'bold');
 end
 
-function fig = create_active_roi_examples(dfof_data, event_mask, event_stats, time_vector, metadata, config)
-    % FIXED: Most active ROIs in 2x4 layout with peak markers
+function fig = create_clean_active_roi_examples(dfof_data, event_mask, event_stats, time_vector, metadata, config)
+    % CLEAN: Most active ROIs in 2x4 layout without peak markers
     
     if ~isfield(event_stats, 'events_per_roi') || isempty(event_stats.events_per_roi)
         fig = create_empty_plot(sprintf('Most Active ROIs - %s', metadata.filename), 'No event data available');
@@ -151,7 +149,7 @@ function fig = create_active_roi_examples(dfof_data, event_mask, event_stats, ti
     [~, active_idx] = sort(event_stats.events_per_roi, 'descend');
     top_active = active_idx(1:min(8, length(active_idx)));
     
-    fig = figure('Name', sprintf('Most Active ROIs - %s', metadata.filename), ...
+    fig = figure('Name', sprintf('Most Active ROIs (Clean) - %s', metadata.filename), ...
         'Position', [300, 100, 1000, 1200]);  % Optimized for 2x4
     
     % STANDARDIZED: 2 columns x 4 rows
@@ -168,11 +166,11 @@ function fig = create_active_roi_examples(dfof_data, event_mask, event_stats, ti
         plot(time_vector, trace, 'k-', 'LineWidth', 0.8);
         hold on;
         
-        % Highlight events and add peak markers
+        % Highlight events WITHOUT peak markers
         if size(event_mask, 2) >= roi_idx
             events = event_mask(:, roi_idx);
             if any(events)
-                % Color individual event episodes
+                % Color individual event episodes differently for variety
                 event_starts = find(diff([false; events]) == 1);
                 event_ends = find(diff([events; false]) == -1);
                 
@@ -186,14 +184,7 @@ function fig = create_active_roi_examples(dfof_data, event_mask, event_stats, ti
                     plot(time_vector, event_trace, 'Color', colors(e, :), 'LineWidth', 2.5);
                 end
                 
-                % Add peak markers above events
-                event_peaks = find_event_peaks_in_mask(trace, events);
-                if ~isempty(event_peaks.frames)
-                    marker_height = event_peaks.amplitudes + 0.03 * range(trace, 'omitnan');
-                    scatter(time_vector(event_peaks.frames), marker_height, 50, '^', ...
-                        'MarkerFaceColor', [1 0.5 0], 'MarkerEdgeColor', [1 0.3 0], ...
-                        'LineWidth', 1.2);
-                end
+                % NO PEAK MARKERS - just the colored event traces
             end
         end
         
@@ -211,25 +202,35 @@ function fig = create_active_roi_examples(dfof_data, event_mask, event_stats, ti
         num_events = event_stats.events_per_roi(roi_idx);
         max_response = max(trace, [], 'omitnan');
         
+        % Enhanced title with noise info if available
+        if isfield(event_stats, 'noise_metrics')
+            noise_level = event_stats.noise_metrics.noise_std(roi_idx);
+            snr = event_stats.noise_metrics.signal_quality(roi_idx);
+            title_text = sprintf('ROI %d: %d events, σ=%.5f\nSNR=%.1f, max=%.3f', ...
+                roi_idx, num_events, noise_level, snr, max_response);
+        else
+            title_text = sprintf('ROI %d: %d events, max=%.3f', roi_idx, num_events, max_response);
+        end
+        
         xlabel('Time (s)', 'FontSize', 10);
         ylabel('dF/F', 'FontSize', 10);
-        title(sprintf('ROI %d: %d events, max=%.3f', roi_idx, num_events, max_response), 'FontSize', 11);
+        title(title_text, 'FontSize', 10);
         grid on;
         
-        % Set y-limits with room for peak markers
+        % Set y-limits (reduced margin since no peak markers)
         y_range = [min(trace, [], 'omitnan'), max(trace, [], 'omitnan')];
         if diff(y_range) > 0
-            y_margin = diff(y_range) * 0.25;  % Extra room for markers
+            y_margin = diff(y_range) * 0.15;  % Reduced margin
             ylim([y_range(1) - y_margin, y_range(2) + y_margin]);
         end
     end
     
-    sgtitle(sprintf('Most Active ROIs - Peak Markers Above Events\n%s', metadata.filename), ...
+    sgtitle(sprintf('Most Active ROIs - Clean Event Visualization\n%s', metadata.filename), ...
         'FontSize', 14, 'FontWeight', 'bold');
 end
 
 function fig = create_event_summary(event_stats, metadata, config)
-    % Event detection summary (can keep existing layout since it's not traces)
+    % Event detection summary (unchanged - no peak markers here anyway)
     
     fig = figure('Name', sprintf('Event Detection Summary - %s', metadata.filename), ...
         'Position', [200, 100, 1000, 600]);
@@ -282,7 +283,7 @@ function fig = create_event_summary(event_stats, metadata, config)
             100 * event_stats.rois_with_events / length(events_per_roi));
         sprintf('Total Events: %d', event_stats.total_events);
         '';
-        'Schmitt Trigger Settings:';
+        'Detection Settings:';
         sprintf('Upper: %.1fσ, Lower: %.1fσ', config.event_detection.upper_threshold_sigma, ...
             config.event_detection.lower_threshold_sigma);
         sprintf('Decay Extension: %d frames', config.event_detection.decay_extension_frames);
@@ -291,48 +292,10 @@ function fig = create_event_summary(event_stats, metadata, config)
     text(0.05, 0.95, summary_text, 'FontSize', 10, 'VerticalAlignment', 'top', ...
         'HorizontalAlignment', 'left', 'Units', 'normalized');
     
-    sgtitle('Schmitt Trigger Event Detection Summary', 'FontSize', 14, 'FontWeight', 'bold');
+    sgtitle('Event Detection Summary', 'FontSize', 14, 'FontWeight', 'bold');
 end
 
-% === HELPER FUNCTIONS ===
-
-function event_peaks = find_event_peaks_in_mask(trace, event_mask)
-    % Find peak locations within event periods
-    
-    event_peaks = struct('frames', [], 'amplitudes', []);
-    
-    if ~any(event_mask)
-        return;
-    end
-    
-    % Find discrete event episodes
-    event_starts = find(diff([false; event_mask]) == 1);
-    event_ends = find(diff([event_mask; false]) == -1);
-    
-    peak_frames = [];
-    peak_amplitudes = [];
-    
-    % For each event episode, find the peak
-    for i = 1:length(event_starts)
-        start_frame = event_starts(i);
-        end_frame = event_ends(i);
-        
-        % Find peak within this event
-        event_segment = trace(start_frame:end_frame);
-        [max_val, max_idx] = max(event_segment);
-        
-        if ~isnan(max_val)
-            % Convert back to original frame index
-            peak_frame = start_frame + max_idx - 1;
-            
-            peak_frames(end+1) = peak_frame;
-            peak_amplitudes(end+1) = max_val;
-        end
-    end
-    
-    event_peaks.frames = peak_frames;
-    event_peaks.amplitudes = peak_amplitudes;
-end
+% === HELPER FUNCTIONS (unchanged) ===
 
 function sample_rois = select_diverse_rois(event_stats, num_samples)
     % Select ROIs representing different activity levels for display

@@ -22,6 +22,13 @@ function config = tracenorm_config()
     config.smooth_method = 'movmean';          % 'movmean', 'movmedian', 'gaussian'
     config.smooth_window = 5;                  % Smoothing window size
     
+    %% === OPTIMAL DETECTION SETTINGS ===
+    config.optimal_detection = struct();
+    config.optimal_detection.use_parallel = true;
+    config.optimal_detection.enhanced_filtering = true;
+    config.optimal_detection.adaptive_noise_estimation = true;
+    config.optimal_detection.convergence_threshold = 0.02;  % 2% change threshold
+    
     %% === EVENT DETECTION - Schmitt Trigger Parameters ===
     config.event_detection = struct();
     config.event_detection.method = 'schmitt_trigger';         % Detection method

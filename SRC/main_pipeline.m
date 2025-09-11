@@ -221,7 +221,7 @@ function fileResult = processSingleFileWithBaseline(data, metadata, options)
     %% === Event Detection with Schmitt Trigger ===
     try
         tic;
-        [event_mask, event_stats] = schmitt_event_detector(dfof_data, config);
+        [event_mask, event_stats] = pure_schmitt_trigger_detector(dfof_data, config, baseline_stats);
         event_time = toc;
         
         % CRITICAL FIX: Ensure event_mask is properly included
