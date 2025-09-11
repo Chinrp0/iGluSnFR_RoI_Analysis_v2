@@ -157,8 +157,8 @@ function fig = create_frequency_plot_final(wt_data, mut_data, comparison)
     % Subplot 1: Clean histogram with 0.01 Hz bins
     subplot(2, 2, 1);
     max_freq = max([wt_freqs, mut_freqs]);
-    edges = 0:0.01:(max_freq + 0.01);  % Fixed 0.01 Hz bins
-    
+    edges = 0:0.02:(max_freq + 0.02);   % 20ms resolution
+
     hold on;
     histogram(wt_freqs, edges, 'FaceColor', [0.2, 0.6, 1.0], 'FaceAlpha', 0.7, ...
         'EdgeColor', 'none', 'DisplayName', sprintf('WT (n=%d active ROIs)', length(wt_freqs)));
