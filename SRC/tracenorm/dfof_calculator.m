@@ -84,9 +84,11 @@ function stats = calculate_dfof_stats(raw_data, baseline, dfof_data, config)
     
     % === Signal Quality Metrics ===
     % Signal-to-noise ratio
-    signal_power = dfof_std;  % Use std as proxy for signal power
-    noise_floor = baseline_stability .* baseline_mean;  % Baseline noise
-    snr = signal_power ./ noise_floor;
+    peak_response = max(dfof_data, [], 1);
+    median_dfof = median(dfof_data, 1);
+    signal_amplitude = peak_response - median_dfof;
+    noise_estimate = mad(dfof_data, 1, 1) * 1.4826;
+    snr = signal_amplitude ./ noise_estimate;
     
     % Dynamic range
     dynamic_range = dfof_max - dfof_min;

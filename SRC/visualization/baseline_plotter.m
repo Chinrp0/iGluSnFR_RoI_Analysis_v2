@@ -1,20 +1,21 @@
-function plot_handles = baseline_plotter(raw_data, baseline, dfof_data, outlier_mask, stats, metadata, config)
+function plot_handles = baseline_plotter(raw_data, baseline, dfof_data, outlier_mask, baseline_stats, dfof_stats, metadata, config)
     % BASELINE_PLOTTER - Visualize baseline calculation performance
-    % Creates comprehensive plots to validate baseline detection quality
+    % FIXED VERSION: Corrected parameter passing and added dfof_stats parameter
     %
     % Inputs:
-    %   raw_data     - [frames x ROIs] original fluorescence data
-    %   baseline     - [frames x ROIs] calculated baseline
-    %   dfof_data    - [frames x ROIs] normalized dF/F traces  
-    %   outlier_mask - [frames x ROIs] logical mask of detected outliers
-    %   stats        - Statistics struct from baseline_detector
-    %   metadata     - File metadata struct
-    %   config       - Configuration struct
+    %   raw_data       - [frames x ROIs] original fluorescence data
+    %   baseline       - [frames x ROIs] calculated baseline
+    %   dfof_data      - [frames x ROIs] normalized dF/F traces  
+    %   outlier_mask   - [frames x ROIs] logical mask of detected outliers
+    %   baseline_stats - Statistics struct from baseline_detector
+    %   dfof_stats     - Statistics struct from dfof_calculator (ADDED)
+    %   metadata       - File metadata struct
+    %   config         - Configuration struct
     %
     % Outputs:
     %   plot_handles - Struct containing figure handles for saving
     
-    if nargin < 7
+    if nargin < 8
         config = tracenorm_config();
     end
     
@@ -34,21 +35,22 @@ function plot_handles = baseline_plotter(raw_data, baseline, dfof_data, outlier_
     %% === Plot 2: Baseline Quality Validation ===
     if config.plot_validation
         plot_handles.baseline_validation = create_baseline_validation(raw_data, baseline, ...
-            stats, metadata, config);
+            baseline_stats, metadata, config);
     end
     
     %% === Plot 3: dF/F Quality Assessment ===
-    plot_handles.dfof_assessment = create_dfof_assessment(dfof_data, stats, ...
+    % FIXED: Now passing dfof_stats instead of baseline_stats
+    plot_handles.dfof_assessment = create_dfof_assessment(dfof_data, dfof_stats, ...
         metadata, config);
     
     %% === Plot 4: Outlier Detection Summary ===
-    plot_handles.outlier_summary = create_outlier_summary(outlier_mask, stats, ...
+    plot_handles.outlier_summary = create_outlier_summary(outlier_mask, baseline_stats, ...
         time_vector, metadata, config);
     
     %% === Plot 5: Transport ROI Detection (if enabled) ===
-    if config.detect_transport_rois && stats.num_transport_rois > 0
+    if config.detect_transport_rois && baseline_stats.num_transport_rois > 0
         plot_handles.transport_detection = create_transport_plots(raw_data, baseline, ...
-            stats, time_vector, metadata, config);
+            baseline_stats, time_vector, metadata, config);
     end
     
     fprintf('  Created %d validation plots\n', length(fieldnames(plot_handles)));
@@ -181,6 +183,7 @@ end
 
 function fig = create_dfof_assessment(dfof_data, stats, metadata, config)
     % Assess dF/F calculation quality
+    % FIXED: Now correctly expects dfof_stats as input
     
     fig = figure('Name', sprintf('dF/F Assessment - %s', metadata.filename), ...
         'Position', [300, 100, 1000, 600]);
@@ -193,7 +196,7 @@ function fig = create_dfof_assessment(dfof_data, stats, metadata, config)
     title('dF/F Distribution');
     grid on;
     
-    % Subplot 2: SNR distribution
+    % Subplot 2: SNR distribution - FIXED: Now accesses snr correctly
     subplot(2, 3, 2);
     histogram(stats.snr, 50, 'EdgeColor', 'none', 'FaceColor', [0.7, 0.9, 0.3]);
     xlabel('Signal-to-Noise Ratio');

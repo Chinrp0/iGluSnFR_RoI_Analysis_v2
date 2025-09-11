@@ -77,7 +77,7 @@ function results = main_pipeline(folder, options)
         try
             results.summary = createSummaryStats(fileResults, metadataArray, loadTime, processTime);
         catch ME
-            warning('Failed to create summary statistics: %s', E.message);
+            warning('Failed to create summary statistics: %s', ME.message);
             % Create minimal summary even if creation fails
             results.summary = createMinimalSummary(fileResults, metadataArray, loadTime, processTime);
         end
@@ -115,7 +115,7 @@ function [dataCell, metadataArray] = loadDataFiles(folder, options, processingMo
         end
         
     catch ME
-        warning('Failed to load data files: %s', E.message);
+        warning('Failed to load data files: %s', ME.message);
         dataCell = {};
         metadataArray = [];
     end
@@ -215,16 +215,16 @@ function fileResult = processSingleFileWithBaseline(data, metadata, options)
         try
             tic;
             plot_handles = baseline_plotter(data, baseline, dfof_data, outlier_mask, ...
-                baseline_stats, dfof_stats, metadata, config);
+    baseline_stats, dfof_stats, metadata, config);
             plot_time = toc;
             
             if options.savePlots
                 save_baseline_plots(plot_handles, metadata, options);
             end
         catch ME
-            warning('Plotting failed: %s', E.message);
+            warning('Plotting failed: %s', ME.message);
             if options.verbose
-                fprintf('      Skipping plots due to error: %s\n', E.message);
+                fprintf('      Skipping plots due to error: %s\n', ME.message);
                 if ~isempty(ME.stack)
                     fprintf('        Error in: %s (line %d)\n', ME.stack(1).name, ME.stack(1).line);
                 end
@@ -375,7 +375,7 @@ function summary = createSummaryStats(fileResults, metadataArray, loadTime, proc
         summary.quality.fractionActiveROIs = sum(active_counts) / sum(numROIs);
         
     catch ME
-        warning('Error creating detailed summary: %s', E.message);
+        warning('Error creating detailed summary: %s', ME.message);
         summary = createMinimalSummary(fileResults, metadataArray, loadTime, processTime);
     end
 end
@@ -409,7 +409,7 @@ function save_baseline_plots(plot_handles, metadata, options)
             end
         end
     catch ME
-        warning('Failed to save plots: %s', E.message);
+        warning('Failed to save plots: %s', ME.message);
     end
 end
 
