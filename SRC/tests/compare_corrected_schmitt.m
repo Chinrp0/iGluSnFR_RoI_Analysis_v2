@@ -1,0 +1,139 @@
+function setup_pipeline()
+    % SETUP_PIPELINE - Initialize the fluorescent imaging analysis environment
+    % UPDATED: Now verifies corrected Schmitt trigger detector and comparison tools
+    % Run this once per MATLAB session to configure paths and dependencies
+    
+    fprintf('=== Setting up Fluorescent Imaging Pipeline with Corrected Schmitt Trigger ===\n');
+    
+    % Get the current directory (should be SRC folder)
+    srcPath = pwd;
+    fprintf('Source directory: %s\n', srcPath);
+    
+    % Add all subfolders to MATLAB path recursively
+    fprintf('Adding all subfolders to MATLAB path...\n');
+    addpath(genpath(srcPath));
+    
+    % Verify key modules are accessible
+    fprintf('Verifying module accessibility:\n');
+    
+    modules = {
+        'csv_loader_v2', 'io/csv_loader_v2.m';
+        'main_pipeline', 'main_pipeline.m';
+        'tracenorm_config', 'config/tracenorm_config.m';
+        'baseline_detector', 'tracenorm/baseline_detector.m';
+        'dfof_calculator', 'tracenorm/dfof_calculator.m';
+        'corrected_schmitt_detector', 'tracenorm/corrected_schmitt_detector.m';  % NEW: Corrected detector
+        'pure_schmitt_trigger_detector', 'tracenorm/pure_schmitt_trigger_detector.m';  % Legacy
+        'quality_assessor', 'tracenorm/quality_assessor.m';
+        'baseline_plotter', 'visualization/baseline_plotter.m'
+    };
+    
+    allModulesFound = true;
+    for i = 1:size(modules, 1)
+        moduleName = modules{i, 1};
+        expectedPath = modules{i, 2};
+        
+        if exist(moduleName, 'file')
+            fprintf('  ✓ %s\n', moduleName);
+        else
+            fprintf('  ✗ %s (expected at %s)\n', moduleName, expectedPath);
+            allModulesFound = false;
+        end
+    end
+    
+    % Test key functionality
+    if allModulesFound
+        fprintf('\nTesting core functionality:\n');
+        
+        try
+            % Test CSV loader
+            loader = csv_loader_v2();
+            fprintf('  ✓ CSV loader initialized\n');
+            
+            % Test configuration (now includes corrected Schmitt parameters)
+            config = tracenorm_config();
+            fprintf('  ✓ Configuration loaded:\n');
+            fprintf('    - Corrected Schmitt: %.1f/%.1fσ (includes outliers in noise)\n', ...
+                config.corrected_schmitt.upper_threshold_sigma, ...
+                config.corrected_schmitt.lower_threshold_sigma);
+            fprintf('    - Legacy Schmitt: %.1f/%.1fσ (excludes outliers from noise)\n', ...
+                config.event_detection.upper_threshold_sigma, ...
+                config.event_detection.lower_threshold_sigma);
+            fprintf('    - Noise exclusion window: %d frames\n', ...
+                config.corrected_schmitt.noise_exclusion_window);
+            fprintf('    - Minimum event duration: %d frames\n', ...
+                config.corrected_schmitt.min_event_duration);
+            
+            % Test main pipeline function (without running it)
+            if exist('main_pipeline', 'file')
+                fprintf('  ✓ Main pipeline accessible\n');
+            end
+            
+            % Test corrected Schmitt detector
+            if exist('corrected_schmitt_detector', 'file')
+                fprintf('  ✓ Corrected Schmitt trigger detector available\n');
+            end
+            
+            % Test legacy detector for comparison
+            if exist('pure_schmitt_trigger_detector', 'file')
+                fprintf('  ✓ Legacy Schmitt trigger detector available (for comparison)\n');
+            end
+            
+            % Test quality assessor
+            if exist('quality_assessor', 'file')
+                fprintf('  ✓ Quality assessor module available\n');
+            end
+            
+            fprintf('\n=== Setup Complete ===\n');
+            fprintf('Ready to run:\n');
+            fprintf('  results = main_pipeline(folder_path);  %% Uses corrected Schmitt by default\n');
+            fprintf('  results = main_pipeline(folder_path, struct(''useCorrectedSchmitt'', false));  %% Uses legacy\n');
+            fprintf('\nNew Features:\n');
+            fprintf('  • Corrected Schmitt trigger (includes outliers in noise calculation)\n');
+            fprintf('  • Proper sustained event exclusion (≥7 frames)\n');
+            fprintf('  • 3-frame validation period for biological events\n');
+            fprintf('  • Backward compatibility with legacy detector\n');
+            fprintf('  • Enhanced noise estimation and thresholding\n');
+            
+        catch ME
+            fprintf('  ✗ Error testing functionality: %s\n', ME.message);
+            allModulesFound = false;
+        end
+    end
+    
+    if ~allModulesFound
+        fprintf('\n=== Setup Issues Found ===\n');
+        fprintf('Please check that you are in the SRC directory and all modules exist.\n');
+        fprintf('Expected folder structure:\n');
+        fprintf('  SRC/\n');
+        fprintf('    ├── main_pipeline.m\n');
+        fprintf('    ├── config/\n');
+        fprintf('    │   └── tracenorm_config.m\n');
+        fprintf('    ├── tracenorm/\n');
+        fprintf('    │   ├── baseline_detector.m\n');
+        fprintf('    │   ├── dfof_calculator.m\n');
+        fprintf('    │   ├── corrected_schmitt_detector.m     ← NEW: Proper noise estimation\n');
+        fprintf('    │   ├── pure_schmitt_trigger_detector.m  ← Legacy for comparison\n');
+        fprintf('    │   └── quality_assessor.m\n');
+        fprintf('    ├── visualization/\n');
+        fprintf('    │   └── baseline_plotter.m\n');
+        fprintf('    ├── tests/\n');
+        fprintf('    │   └── compare_schmitt_implementations.m  ← NEW: Compare methods\n');
+        fprintf('    └── io/\n');
+        fprintf('        └── csv_loader_v2.m\n');
+    else
+        % Display algorithm summary
+        fprintf('\n=== Algorithm Summary ===\n');
+        fprintf('CORRECTED Schmitt Trigger Logic:\n');
+        fprintf('  1. Include outliers in noise calculation (they ARE noise)\n');
+        fprintf('  2. Exclude sustained biological events (≥7 frames) from noise\n');
+        fprintf('  3. Calculate thresholds: 3.5σ upper, 1.5σ lower\n');
+        fprintf('  4. Event starts when crossing above upper threshold\n');
+        fprintf('  5. Validate: must stay above lower threshold for ≥3 frames\n');
+        fprintf('  6. Event ends when dropping below lower threshold\n');
+        fprintf('  7. Merge nearby events (≤2 frame gap)\n');
+        fprintf('\nKey Difference from Legacy:\n');
+        fprintf('  Legacy: Excludes outliers from noise → UNDERESTIMATES noise\n');
+        fprintf('  Corrected: Includes outliers in noise → REALISTIC noise estimation\n');
+    end
+end
