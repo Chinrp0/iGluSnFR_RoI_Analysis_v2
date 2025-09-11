@@ -7,14 +7,14 @@ clear; clc; close all;
 % Change these parameters to customize your trace selection
 
 % How many traces to show?
-NUM_TRACES = 16;  % Increase this to see more ROIs
+NUM_TRACES = 8;  % Increase this to see more ROIs
 
 % What kind of ROIs do you want to see?
-SELECTION_MODE = 'mixed';  % Options: 'most_events', 'highest_snr', 'largest_amplitude', 'best_baseline', 'mixed'
+SELECTION_MODE = 'highest_snr';  % Options: 'most_events', 'highest_snr', 'largest_amplitude', 'best_baseline', 'mixed'
 
 % Minimum criteria (set lower to be more inclusive)
 MIN_EVENTS = 2;        % Minimum number of detected events
-MIN_SNR = 1.0;         % Minimum signal-to-noise ratio  
+MIN_SNR = 5.0;         % Minimum signal-to-noise ratio  
 MIN_DFOF = 0.02;       % Minimum peak dF/F (2%)
 MIN_BASELINE_QUALITY = 0.8;  % Minimum baseline quality (80%)
 
@@ -88,99 +88,123 @@ switch SELECTION_MODE
     case 'mixed'
         % Take some from each category
         n_per_category = ceil(NUM_TRACES / 4);
-        
+    
         [~, idx1] = sort(events_per_roi(good_rois), 'descend');
         [~, idx2] = sort(snr_values(good_rois), 'descend');
         [~, idx3] = sort(max_dfof(good_rois), 'descend');
         [~, idx4] = sort(baseline_quality(good_rois), 'descend');
-        
+    
         mixed_selection = [good_rois(idx1(1:min(n_per_category, length(idx1)))), ...
                           good_rois(idx2(1:min(n_per_category, length(idx2)))), ...
                           good_rois(idx3(1:min(n_per_category, length(idx3)))), ...
                           good_rois(idx4(1:min(n_per_category, length(idx4))))];
-        
-        selected_rois = unique(mixed_selection);
-        selected_rois = selected_rois(1:min(NUM_TRACES, length(selected_rois)));
+    
+        selected_rois = unique(mixed_selection, 'stable');
+    
+        % Fill up if duplicates reduced count
+        if length(selected_rois) < NUM_TRACES
+            remaining = setdiff(good_rois, selected_rois, 'stable');
+            needed = NUM_TRACES - length(selected_rois);
+            selected_rois = [selected_rois, remaining(1:needed)];
+            fprintf('  Filled with %d additional ROIs due to duplicates\n', needed);
+        end
+    
         fprintf('  Selection: Mixed criteria (events + SNR + amplitude + baseline)\n');
-        
-    otherwise
-        % Default: just take first N good ROIs
-        selected_rois = good_rois(1:NUM_TRACES);
-        fprintf('  Selection: First %d ROIs meeting criteria\n', NUM_TRACES);
 end
 
 %% === Create Raw + Baseline Plots ===
 fprintf('\nCreating trace plots for %d selected ROIs...\n', length(selected_rois));
 
-% Calculate subplot layout
-rows = ceil(sqrt(length(selected_rois)));
-cols = ceil(length(selected_rois) / rows);
+rows = 4; cols = 2; 
+plots_per_fig = rows * cols;
+num_figs = ceil(length(selected_rois) / plots_per_fig);
 
-fig1 = figure('Name', 'Raw Traces + Baseline', 'Position', [50, 50, 1400, 1000]);
+for f = 1:num_figs
+    fig1 = figure('Name', sprintf('Raw Traces + Baseline (Set %d/%d)', f, num_figs), ...
+                  'Position', [50, 50, 1000, 1200]);
 
-for i = 1:length(selected_rois)
-    roi_idx = selected_rois(i);
-    
-    subplot(rows, cols, i);
-    
-    % Plot raw data
-    plot(time_vector, data(:, roi_idx), 'k-', 'LineWidth', 0.7, 'DisplayName', 'Raw');
-    hold on;
-    
-    % Plot baseline
-    plot(time_vector, baseline(:, roi_idx), 'r-', 'LineWidth', 1.2, 'DisplayName', 'Baseline');
-    
-    % Mark events
-    events = outlier_mask(:, roi_idx);
-    if any(events)
-        scatter(time_vector(events), data(events, roi_idx), 20, 'o', ...
-            'MarkerFaceColor', [1 0.5 0], 'MarkerEdgeColor', [1 0.5 0], ...
-            'DisplayName', sprintf('%d events', sum(events)));
+    roi_subset = selected_rois((f-1)*plots_per_fig + 1 : ...
+                               min(f*plots_per_fig, length(selected_rois)));
+
+    for i = 1:length(roi_subset)
+        subplot(rows, cols, i);
+
+        roi_idx = roi_subset(i);
+
+        % Plot raw data
+        plot(time_vector, data(:, roi_idx), 'k-', 'LineWidth', 0.7, 'DisplayName', 'Raw');
+        hold on;
+
+        % Plot baseline
+        plot(time_vector, baseline(:, roi_idx), 'r-', 'LineWidth', 1.2, 'DisplayName', 'Baseline');
+
+        % Mark events
+        events = outlier_mask(:, roi_idx);
+        if any(events)
+            scatter(time_vector(events), data(events, roi_idx), 20, 'o', ...
+                'MarkerFaceColor', [1 0.5 0], 'MarkerEdgeColor', [1 0.5 0], ...
+                'DisplayName', sprintf('%d events', sum(events)));
+        end
+
+        xlabel('Time (s)');
+        ylabel('Fluorescence');
+        title(sprintf('ROI %d (%d events, SNR=%.1f)', roi_idx, ...
+              events_per_roi(roi_idx), snr_values(roi_idx)));
+        grid on;
+
+        if i == 1
+            legend('Location', 'best', 'FontSize', 8);
+        end
     end
-    
-    xlabel('Time (s)');
-    ylabel('Fluorescence');
-    title(sprintf('ROI %d (%d events, SNR=%.1f)', roi_idx, events_per_roi(roi_idx), snr_values(roi_idx)));
-    grid on;
-    
-    if i == 1
-        legend('Location', 'best', 'FontSize', 8);
-    end
+
+    sgtitle(sprintf('Raw Traces with Baseline - %s (%s selection)', ...
+        metadata.filename, SELECTION_MODE), 'FontSize', 14);
 end
-
-sgtitle(sprintf('Raw Traces with Baseline - %s (%s selection)', metadata.filename, SELECTION_MODE), 'FontSize', 14);
 
 %% === Create dF/F Plots (if requested) ===
 if SHOW_DFOF_PLOTS
-    fig2 = figure('Name', 'dF/F Traces', 'Position', [100, 100, 1400, 1000]);
-    
-    for i = 1:length(selected_rois)
-        roi_idx = selected_rois(i);
-        
-        subplot(rows, cols, i);
-        
-        % Plot dF/F
-        plot(time_vector, dfof_data(:, roi_idx), 'b-', 'LineWidth', 1.0);
-        hold on;
-        
-        % Add reference lines
-        yline(0, 'k--', 'Alpha', 0.3, 'Baseline');
-        yline(0.05, 'g--', 'Alpha', 0.5, '5%');
-        
-        % Mark significant events (>5% dF/F)
-        big_events = dfof_data(:, roi_idx) > 0.05;
-        if any(big_events)
-            scatter(time_vector(big_events), dfof_data(big_events, roi_idx), 15, ...
-                'filled', 'MarkerFaceColor', [0 0.8 0]);
+    rows = 4; cols = 2; 
+    plots_per_fig = rows * cols;
+    num_figs = ceil(length(selected_rois) / plots_per_fig);
+
+    for f = 1:num_figs
+        fig2 = figure('Name', sprintf('dF/F Traces (Set %d/%d)', f, num_figs), ...
+                      'Position', [100, 100, 1000, 1200]);
+
+        roi_subset = selected_rois((f-1)*plots_per_fig + 1 : ...
+                                   min(f*plots_per_fig, length(selected_rois)));
+
+        for i = 1:length(roi_subset)
+            subplot(rows, cols, i);
+
+            roi_idx = roi_subset(i);
+
+            % Plot dF/F
+            plot(time_vector, dfof_data(:, roi_idx), 'b-', 'LineWidth', 1.0);
+            hold on;
+
+            % Add reference lines with transparency
+            h1 = yline(0, 'k--', 'Baseline');
+            h1.Color(4) = 0.3;
+
+            h2 = yline(0.05, 'g--', '5%');
+            h2.Color(4) = 0.5;
+
+            % Mark significant events (>5% dF/F)
+            big_events = dfof_data(:, roi_idx) > 0.05;
+            if any(big_events)
+                scatter(time_vector(big_events), dfof_data(big_events, roi_idx), 15, ...
+                    'filled', 'MarkerFaceColor', [0 0.8 0]);
+            end
+
+            xlabel('Time (s)');
+            ylabel('dF/F');
+            title(sprintf('ROI %d (max dF/F = %.3f)', roi_idx, max_dfof(roi_idx)));
+            grid on;
         end
-        
-        xlabel('Time (s)');
-        ylabel('dF/F');
-        title(sprintf('ROI %d (max dF/F = %.3f)', roi_idx, max_dfof(roi_idx)));
-        grid on;
+
+        sgtitle('dF/F Normalized Traces', 'FontSize', 14);
     end
-    
-    sgtitle('dF/F Normalized Traces', 'FontSize', 14);
 end
 
 %% === Print Detailed Information ===
