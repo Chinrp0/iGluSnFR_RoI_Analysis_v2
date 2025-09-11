@@ -1,6 +1,6 @@
 function results = main_pipeline(folder, options)
-    % MAIN_PIPELINE - Orchestrates fluorescent imaging analysis with baseline calculation
-    % FIXED VERSION: Better error handling for empty results
+    % MAIN_PIPELINE - Orchestrates fluorescent imaging analysis with corrected Schmitt trigger
+    % UPDATED VERSION: Integrates corrected_schmitt_detector with proper noise estimation
     
     % Handle optional arguments
     if nargin < 2
@@ -13,6 +13,7 @@ function results = main_pipeline(folder, options)
     if ~isfield(options, 'continueOnError'), options.continueOnError = true; end
     if ~isfield(options, 'createPlots'), options.createPlots = true; end
     if ~isfield(options, 'savePlots'), options.savePlots = false; end
+    if ~isfield(options, 'useCorrectedSchmitt'), options.useCorrectedSchmitt = true; end  % NEW: Use corrected version by default
     
     % Determine processing mode
     if isfile(folder) && endsWith(folder, '.csv')
@@ -29,6 +30,15 @@ function results = main_pipeline(folder, options)
         end
     end
     
+    % Display detector being used
+    if options.verbose
+        if options.useCorrectedSchmitt
+            fprintf('Using: CORRECTED Schmitt trigger (includes outliers in noise)\n');
+        else
+            fprintf('Using: LEGACY Schmitt trigger (excludes outliers from noise)\n');
+        end
+    end
+    
     % Initialize results structure
     results = struct();
     results.fileResults = {};
@@ -36,6 +46,11 @@ function results = main_pipeline(folder, options)
     results.errors = struct('failedFiles', {}, 'errorMessages', {});
     results.summary = struct();
     results.processingMode = processingMode;
+    if options.useCorrectedSchmitt
+        results.detectorUsed = 'corrected_schmitt';
+    else
+        results.detectorUsed = 'legacy_schmitt';
+    end
     
     try
         %% Step 1: Load CSV Data
@@ -77,7 +92,7 @@ function results = main_pipeline(folder, options)
         try
             results.summary = createSummaryStats(fileResults, metadataArray, loadTime, processTime);
         catch ME
-            warning('Failed to create summary statistics: %s', E.message);
+            warning('Failed to create summary statistics: %s', ME.message);
             % Create minimal summary even if creation fails
             results.summary = createMinimalSummary(fileResults, metadataArray, loadTime, processTime);
         end
@@ -115,7 +130,7 @@ function [dataCell, metadataArray] = loadDataFiles(folder, options, processingMo
         end
         
     catch ME
-        warning('Failed to load data files: %s', E.message);
+        warning('Failed to load data files: %s', ME.message);
         dataCell = {};
         metadataArray = [];
     end
@@ -146,8 +161,8 @@ function [fileResults, errors] = processFilesWithBaseline(dataCell, metadataArra
                 fprintf('    Processing file: %s\n', metadata.filename);
             end
             
-            % Process this file with IMPROVED error handling
-            fileResult = processSingleFileWithBaseline(data, metadata, options);
+            % Process this file with CORRECTED detector
+            fileResult = processSingleFileWithCorrectedDetector(data, metadata, options);
             fileResults{i} = fileResult;
             
         catch ME
@@ -175,9 +190,9 @@ function [fileResults, errors] = processFilesWithBaseline(dataCell, metadataArra
     fileResults = fileResults(validResults);
 end
 
-function fileResult = processSingleFileWithBaseline(data, metadata, options)
-    % FIXED VERSION: Consistent data flow between modules
-    % Ensures all modules receive properly structured data
+function fileResult = processSingleFileWithCorrectedDetector(data, metadata, options)
+    % UPDATED VERSION: Uses corrected Schmitt detector with proper noise estimation
+    % Maintains backward compatibility while using improved algorithm
     
     [numFrames, numROIs] = size(data);
     
@@ -186,7 +201,7 @@ function fileResult = processSingleFileWithBaseline(data, metadata, options)
     config.verbose = options.verbose && numROIs > 2000;
     
     if options.verbose && numROIs > 2000
-        fprintf('      Large file: %d ROIs, %.1f MB - applying baseline calculation\n', ...
+        fprintf('      Large file: %d ROIs, %.1f MB - applying corrected Schmitt detector\n', ...
             numROIs, numel(data) * 4 / (1024^2));
     end
     
@@ -218,20 +233,30 @@ function fileResult = processSingleFileWithBaseline(data, metadata, options)
         error('dF/F calculation failed: %s', ME.message);
     end
     
-    %% === Event Detection with Schmitt Trigger ===
+    %% === Event Detection - CORRECTED or LEGACY ===
     try
         tic;
-        [event_mask, event_stats] = pure_schmitt_trigger_detector(dfof_data, config, baseline_stats);
+        
+        if options.useCorrectedSchmitt
+            % Use NEW corrected detector (includes outliers in noise calculation)
+            [event_mask, event_stats] = corrected_schmitt_detector(dfof_data, config, baseline_stats);
+            detector_used = 'corrected_schmitt';
+        else
+            % Use LEGACY detector (excludes outliers from noise calculation)
+            [event_mask, event_stats] = pure_schmitt_trigger_detector(dfof_data, config, baseline_stats);
+            detector_used = 'legacy_schmitt';
+        end
+        
         event_time = toc;
         
-        % CRITICAL FIX: Ensure event_mask is properly included
+        % CRITICAL: Ensure event_mask is properly included
         if ~isfield(event_stats, 'event_mask')
             event_stats.event_mask = event_mask;
         end
         
         if config.verbose
-            fprintf('      Events: %.3f s, %d events across %d ROIs\n', ...
-                event_time, event_stats.total_events, event_stats.rois_with_events);
+            fprintf('      Events (%s): %.3f s, %d events across %d ROIs\n', ...
+                detector_used, event_time, event_stats.total_events, event_stats.rois_with_events);
         end
     catch ME
         error('Event detection failed: %s', ME.message);
@@ -297,6 +322,7 @@ function fileResult = processSingleFileWithBaseline(data, metadata, options)
     fileResult.numFrames = numFrames;
     fileResult.numROIs = numROIs;
     fileResult.dataSize_MB = numel(data) * 4 / (1024^2);
+    fileResult.detectorUsed = detector_used;  % NEW: Track which detector was used
     
     % Core results
     fileResult.baseline = baseline;
@@ -305,11 +331,11 @@ function fileResult = processSingleFileWithBaseline(data, metadata, options)
     fileResult.dfof_data = dfof_data;
     fileResult.dfof_stats = dfof_stats;
     
-    % FIXED: Event detection results with consistent naming
+    % Event detection results
     fileResult.event_mask = event_mask;
     fileResult.event_stats = event_stats;
     
-    % FIXED: Quality metrics
+    % Quality metrics
     fileResult.quality_metrics = quality_metrics;
     
     % Timing information
@@ -324,22 +350,22 @@ function fileResult = processSingleFileWithBaseline(data, metadata, options)
     % Visualization
     fileResult.plot_handles = plot_handles;
     
-    % FIXED: Summary metrics (for backward compatibility)
+    % Summary metrics (for backward compatibility)
     fileResult.quality = struct();
     fileResult.quality.fraction_good_baseline = getFieldSafe(baseline_stats, 'fraction_good_rois', 0);
     fileResult.quality.fraction_good_dfof = getFieldSafe(quality_metrics, 'fraction_good_rois', 0);
     fileResult.quality.mean_snr = getFieldSafe(dfof_stats, 'mean_snr', 0);
     fileResult.quality.transport_rois = getFieldSafe(baseline_stats, 'num_transport_rois', 0);
     
-    % FIXED: Enhanced quality metrics with consistent naming
+    % Enhanced quality metrics with consistent naming
     fileResult.quality.active_rois = getFieldSafe(quality_metrics.summary, 'active_rois', 0);
     fileResult.quality.total_events = getFieldSafe(event_stats, 'total_events', 0);
     fileResult.quality.mean_event_amplitude = getFieldSafe(event_stats, 'mean_event_amplitude', 0);
     
     if options.verbose && (fileResult.quality.transport_rois > 0 || fileResult.quality.active_rois > 0)
-        fprintf('      Final Results: %d transport, %d active ROIs, %d events, SNR=%.2f\n', ...
+        fprintf('      Final Results: %d transport, %d active ROIs, %d events, SNR=%.2f (%s)\n', ...
             fileResult.quality.transport_rois, fileResult.quality.active_rois, ...
-            fileResult.quality.total_events, fileResult.quality.mean_snr);
+            fileResult.quality.total_events, fileResult.quality.mean_snr, detector_used);
     end
 end
 
@@ -475,6 +501,11 @@ function summary = createSummaryStats(fileResults, metadataArray, loadTime, proc
         dfof_times = arrayfun(@(r) getFieldSafe(r.timing, 'dfof_time', 0), [fileResults{:}]);
         plot_times = arrayfun(@(r) getFieldSafe(r.timing, 'plot_time', 0), [fileResults{:}]);
         
+        % NEW: Detector tracking
+        detectors_used = {fileResults.detectorUsed};
+        corrected_count = sum(strcmp(detectors_used, 'corrected_schmitt'));
+        legacy_count = sum(strcmp(detectors_used, 'legacy_schmitt'));
+        
         % Build summary
         summary = struct();
         summary.totalFiles = length(metadataArray);
@@ -503,8 +534,18 @@ function summary = createSummaryStats(fileResults, metadataArray, loadTime, proc
         summary.quality.totalActiveROIs = sum(active_counts);
         summary.quality.fractionActiveROIs = sum(active_counts) / sum(numROIs);
         
+        % NEW: Detector usage tracking
+        summary.detection = struct();
+        summary.detection.correctedSchmittFiles = corrected_count;
+        summary.detection.legacySchmittFiles = legacy_count;
+        if corrected_count > legacy_count
+            summary.detection.primaryDetector = 'corrected_schmitt';
+        else
+            summary.detection.primaryDetector = 'legacy_schmitt';
+        end
+        
     catch ME
-        warning('Error creating detailed summary: %s', E.message);
+        warning('Error creating detailed summary: %s', ME.message);
         summary = createMinimalSummary(fileResults, metadataArray, loadTime, processTime);
     end
 end
@@ -535,9 +576,18 @@ function printSummary(summary, errors)
             summary.data.avgROIsPerFile, summary.data.roiRange(1), summary.data.roiRange(2));
     end
     
+    % NEW: Detector usage summary
+    if isfield(summary, 'detection')
+        fprintf('\n=== Event Detection Method ===\n');
+        fprintf('Corrected Schmitt: %d files (includes outliers in noise)\n', summary.detection.correctedSchmittFiles);
+        fprintf('Legacy Schmitt: %d files (excludes outliers from noise)\n', summary.detection.legacySchmittFiles);
+        fprintf('Primary method: %s\n', summary.detection.primaryDetector);
+    end
+    
     % Timing summary
     if isfield(summary, 'timing')
-        fprintf('Timing: %.3f s load + %.3f s process = %.3f s total\n', ...
+        fprintf('\n=== Timing ===\n');
+        fprintf('Total: %.3f s load + %.3f s process = %.3f s total\n', ...
             summary.timing.loadTime_s, summary.timing.processTime_s, summary.timing.totalTime_s);
         
         if isfield(summary.timing, 'avgBaselineTime_s')

@@ -1,6 +1,6 @@
 function config = tracenorm_config()
-    % TRACENORM_CONFIG - Updated configuration for fixed modular pipeline
-    % Ensures all modules work together with consistent parameters
+    % TRACENORM_CONFIG - Updated configuration for corrected Schmitt trigger pipeline
+    % Includes new corrected_schmitt parameters for proper noise estimation
     
     config = struct();
     
@@ -22,14 +22,17 @@ function config = tracenorm_config()
     config.smooth_method = 'movmean';          % 'movmean', 'movmedian', 'gaussian'
     config.smooth_window = 5;                  % Smoothing window size
     
-    %% === OPTIMAL DETECTION SETTINGS ===
-    config.optimal_detection = struct();
-    config.optimal_detection.use_parallel = true;
-    config.optimal_detection.enhanced_filtering = true;
-    config.optimal_detection.adaptive_noise_estimation = true;
-    config.optimal_detection.convergence_threshold = 0.02;  % 2% change threshold
+    %% === CORRECTED SCHMITT TRIGGER - NEW IMPLEMENTATION ===
+    config.corrected_schmitt = struct();
+    config.corrected_schmitt.upper_threshold_sigma = 3.5;      % Upper threshold (start events)
+    config.corrected_schmitt.lower_threshold_sigma = 1.5;      % Lower threshold (end events)
+    config.corrected_schmitt.noise_exclusion_window = 7;       % Frames to exclude from noise calc
+    config.corrected_schmitt.min_event_duration = 3;           % Minimum event duration
+    config.corrected_schmitt.sustained_percentile = 85;        % Percentile for sustained event detection
+    config.corrected_schmitt.use_outlier_mask = true;          % Use baseline detector's outlier mask
+    config.corrected_schmitt.include_outliers_in_noise = true; % CRITICAL: Include outliers in noise calc
     
-    %% === EVENT DETECTION - Schmitt Trigger Parameters ===
+    %% === LEGACY EVENT DETECTION - Schmitt Trigger Parameters ===
     config.event_detection = struct();
     config.event_detection.method = 'schmitt_trigger';         % Detection method
     config.event_detection.upper_threshold_sigma = 3.0;        % Upper threshold (event start)
@@ -93,13 +96,14 @@ function config = tracenorm_config()
     config.create_fallback_data = true;        % Create empty data structures on failure
     
     if config.verbose
-        fprintf('Config loaded: Fixed modular pipeline\n');
-        fprintf('  Schmitt trigger: %.1f/%.1fσ thresholds\n', ...
+        fprintf('Config loaded: Corrected Schmitt trigger pipeline\n');
+        fprintf('  Corrected Schmitt: %.1f/%.1fσ thresholds (includes outliers in noise)\n', ...
+            config.corrected_schmitt.upper_threshold_sigma, ...
+            config.corrected_schmitt.lower_threshold_sigma);
+        fprintf('  Legacy Schmitt: %.1f/%.1fσ thresholds\n', ...
             config.event_detection.upper_threshold_sigma, ...
             config.event_detection.lower_threshold_sigma);
         fprintf('  Visualization: %dx%d layout (%d subplots)\n', ...
             config.plot_layout.rows, config.plot_layout.cols, config.plot_layout.subplots);
-        fprintf('  Peak markers: %s above events\n', ...
-            config.peak_markers.symbol);
     end
 end
