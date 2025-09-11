@@ -1,32 +1,22 @@
-function plot_handles = baseline_plotter(raw_data, baseline, dfof_data, outlier_mask, baseline_stats, dfof_stats, metadata, config, event_stats)
-    % BASELINE_PLOTTER - Drop-in replacement with exact same signature
-    % Shows focused dF/F traces with events instead of complex multi-panel plots
+function plot_handles = simple_event_trace_plotter(raw_data, baseline, dfof_data, event_mask, event_stats, metadata, config)
+    % SIMPLE_EVENT_TRACE_PLOTTER - Clean visualization of dF/F traces with event markings
+    % Focus: Show baseline-corrected traces with clear event identification
     %
-    % This is a direct replacement for your existing baseline_plotter.m
-    % Same parameters, cleaner output focused on event detection
+    % Inputs:
+    %   raw_data    - [frames x ROIs] original fluorescence data
+    %   baseline    - [frames x ROIs] calculated baseline
+    %   dfof_data   - [frames x ROIs] dF/F traces
+    %   event_mask  - [frames x ROIs] logical mask of detected events
+    %   event_stats - Event detection statistics
+    %   metadata    - File metadata
+    %   config      - Configuration parameters
     
-    % Handle backward compatibility
-    if nargin < 9
-        event_stats = struct();
-        event_stats.events_per_roi = zeros(1, size(raw_data, 2));
-        event_stats.total_events = 0;
-        event_stats.event_mask = false(size(raw_data));
-        fprintf('Warning: No event_stats provided, using empty event data\n');
-    end
-    
-    % Extract event_mask from event_stats
-    if isfield(event_stats, 'event_mask')
-        event_mask = event_stats.event_mask;
-    else
-        event_mask = false(size(raw_data));
-    end
-    
-    [numFrames, numROIs] = size(raw_data);
-    time_vector = (1:numFrames) / config.frame_rate;
+    [numFrames, numROIs] = size(dfof_data);
+    time_vector = (1:numFrames) / config.frame_rate;  % Time in seconds
     
     plot_handles = struct();
     
-    fprintf('Creating focused event plots for %s...\n', metadata.filename);
+    fprintf('Creating focused event trace plots for %s...\n', metadata.filename);
     
     %% === Plot 1: Sample dF/F Traces with Events ===
     plot_handles.event_traces = create_event_trace_overview(dfof_data, event_mask, event_stats, ...
@@ -48,90 +38,68 @@ function fig = create_event_trace_overview(dfof_data, event_mask, event_stats, t
     [numFrames, numROIs] = size(dfof_data);
     
     % Select diverse ROIs for display
-    sample_rois = select_representative_rois(event_stats, 12);
+    sample_rois = select_representative_rois(event_stats, 12);  % Show 12 traces
     
     fig = figure('Name', sprintf('dF/F Traces with Events - %s', metadata.filename), ...
-        'Position', [100, 100, 1200, 1400]);  % Taller, narrower window
+        'Position', [100, 100, 1600, 1000]);
     
-    rows = 4;  % More rows for better trace visibility
-    cols = 3;  % Fewer columns
+    rows = 3;
+    cols = 4;
     
     for i = 1:length(sample_rois)
         roi_idx = sample_rois(i);
         
         subplot(rows, cols, i);
         
-        % Plot dF/F trace with thicker line
+        % Plot dF/F trace
         trace = dfof_data(:, roi_idx);
-        plot(time_vector, trace, 'k-', 'LineWidth', 1.2);
+        plot(time_vector, trace, 'k-', 'LineWidth', 1.0);
         hold on;
         
-        % Highlight detected events in red (cleaner approach)
-        if size(event_mask, 2) >= roi_idx
-            events = event_mask(:, roi_idx);
-            if any(events)
-                event_trace = trace;
-                event_trace(~events) = NaN;
-                plot(time_vector, event_trace, 'r-', 'LineWidth', 2.5);
-                
-                % Add subtle event markers at peaks
-                event_peaks = find_event_peaks(trace, events);
-                if ~isempty(event_peaks)
-                    scatter(time_vector(event_peaks), trace(event_peaks), 30, 'r', 'filled', ...
-                        'MarkerEdgeColor', 'k', 'LineWidth', 0.5);
-                end
-            end
+        % Highlight detected events in red
+        events = event_mask(:, roi_idx);
+        if any(events)
+            event_trace = trace;
+            event_trace(~events) = NaN;  % Only show event portions
+            plot(time_vector, event_trace, 'r-', 'LineWidth', 2.5);
         end
         
-        % Add Schmitt trigger thresholds - more subtle
+        % Add Schmitt trigger thresholds if available
         if isfield(event_stats, 'upper_thresholds') && length(event_stats.upper_thresholds) >= roi_idx
             upper_thresh = event_stats.upper_thresholds(roi_idx);
             lower_thresh = event_stats.lower_thresholds(roi_idx);
             
-            yline(upper_thresh, '--', 'Color', [0.4 0.8 0.4], 'LineWidth', 1, 'Alpha', 0.7);
-            yline(lower_thresh, '--', 'Color', [0.4 0.8 0.8], 'LineWidth', 1, 'Alpha', 0.7);
+            yline(upper_thresh, 'g--', 'LineWidth', 1, 'Alpha', 0.6);
+            yline(lower_thresh, 'c--', 'LineWidth', 1, 'Alpha', 0.6);
         end
         
-        % Add zero reference line - more subtle
-        yline(0, ':', 'Color', [0.5 0.5 0.5], 'Alpha', 0.6, 'LineWidth', 1);
+        % Add zero reference line
+        yline(0, 'k:', 'Alpha', 0.4, 'LineWidth', 0.5);
         
         % Get event count for this ROI
-        if isfield(event_stats, 'events_per_roi') && length(event_stats.events_per_roi) >= roi_idx
-            num_events = event_stats.events_per_roi(roi_idx);
-        else
-            num_events = 0;
-        end
-        
+        num_events = event_stats.events_per_roi(roi_idx);
         max_dfof = max(trace, [], 'omitnan');
         
-        xlabel('Time (s)', 'FontSize', 10);
-        ylabel('dF/F', 'FontSize', 10);
-        title(sprintf('ROI %d: %d events, max=%.3f', roi_idx, num_events, max_dfof), ...
-            'FontSize', 11, 'FontWeight', 'bold');
+        xlabel('Time (s)', 'FontSize', 9);
+        ylabel('dF/F', 'FontSize', 9);
+        title(sprintf('ROI %d: %d events, max=%.3f', roi_idx, num_events, max_dfof), 'FontSize', 10);
         grid on;
-        grid minor;
         
-        % Set reasonable y-limits with better margins
+        % Set reasonable y-limits
         y_range = [min(trace, [], 'omitnan'), max(trace, [], 'omitnan')];
         if diff(y_range) > 0
-            y_margin = diff(y_range) * 0.15;
+            y_margin = diff(y_range) * 0.1;
             ylim([y_range(1) - y_margin, y_range(2) + y_margin]);
         end
         
         % Add legend only to first subplot
         if i == 1
-            legend('dF/F', 'Events', 'Event Peaks', 'Upper (3.0σ)', 'Lower (1.5σ)', ...
-                'Location', 'best', 'FontSize', 9);
+            legend('dF/F', 'Events', 'Upper (3.0σ)', 'Lower (1.5σ)', 'Location', 'best', 'FontSize', 8);
         end
     end
     
-    total_events = 0;
-    if isfield(event_stats, 'total_events')
-        total_events = event_stats.total_events;
-    end
-    
     sgtitle(sprintf('Baseline-Corrected Traces with Schmitt Trigger Events\n%s (%d total events)', ...
-        metadata.filename, total_events), 'FontSize', 14, 'FontWeight', 'bold');
+        metadata.filename, event_stats.total_events), 'FontSize', 14, 'FontWeight', 'bold');
 end
 
 function fig = create_event_detection_summary(event_stats, metadata, config)
@@ -140,18 +108,9 @@ function fig = create_event_detection_summary(event_stats, metadata, config)
     fig = figure('Name', sprintf('Event Detection Summary - %s', metadata.filename), ...
         'Position', [200, 100, 1000, 600]);
     
-    % Check if we have event data
-    if ~isfield(event_stats, 'events_per_roi') || isempty(event_stats.events_per_roi)
-        text(0.5, 0.5, 'No event data available for summary', 'HorizontalAlignment', 'center', ...
-            'VerticalAlignment', 'middle', 'FontSize', 14);
-        title('Event Summary - NO DATA');
-        return;
-    end
-    
-    events_per_roi = event_stats.events_per_roi;
-    
     % Subplot 1: Events per ROI histogram
     subplot(2, 2, 1);
+    events_per_roi = event_stats.events_per_roi;
     histogram(events_per_roi, 0:max(events_per_roi), 'EdgeColor', 'none', 'FaceColor', [0.3, 0.6, 0.9]);
     
     % Add statistical lines
@@ -167,7 +126,7 @@ function fig = create_event_detection_summary(event_stats, metadata, config)
     
     % Subplot 2: Threshold distribution
     subplot(2, 2, 2);
-    if isfield(event_stats, 'upper_thresholds') && ~isempty(event_stats.upper_thresholds)
+    if isfield(event_stats, 'upper_thresholds')
         histogram(event_stats.upper_thresholds, 30, 'EdgeColor', 'none', 'FaceColor', [0.6, 0.9, 0.4], 'FaceAlpha', 0.7);
         hold on;
         histogram(event_stats.lower_thresholds, 30, 'EdgeColor', 'none', 'FaceColor', [0.4, 0.9, 0.6], 'FaceAlpha', 0.7);
@@ -201,32 +160,14 @@ function fig = create_event_detection_summary(event_stats, metadata, config)
     subplot(2, 2, 4);
     axis off;
     
-    total_events = 0;
-    rois_with_events = 0;
-    mean_duration = 0;
-    fraction_frames = 0;
-    
-    if isfield(event_stats, 'total_events')
-        total_events = event_stats.total_events;
-    end
-    if isfield(event_stats, 'rois_with_events')
-        rois_with_events = event_stats.rois_with_events;
-    end
-    if isfield(event_stats, 'mean_event_duration')
-        mean_duration = event_stats.mean_event_duration;
-    end
-    if isfield(event_stats, 'fraction_frames_in_events')
-        fraction_frames = event_stats.fraction_frames_in_events;
-    end
-    
     summary_text = {
         sprintf('Dataset: %s', metadata.filename),
         '',
         sprintf('Total ROIs: %d', length(events_per_roi)),
-        sprintf('Active ROIs: %d (%.1f%%)', rois_with_events, ...
-            100 * rois_with_events / length(events_per_roi)),
-        sprintf('Total Events: %d', total_events),
-        sprintf('Events/Active ROI: %.1f', total_events / max(1, rois_with_events)),
+        sprintf('Active ROIs: %d (%.1f%%)', event_stats.rois_with_events, ...
+            100 * event_stats.rois_with_events / length(events_per_roi)),
+        sprintf('Total Events: %d', event_stats.total_events),
+        sprintf('Events/Active ROI: %.1f', event_stats.total_events / max(1, event_stats.rois_with_events)),
         '',
         'Schmitt Trigger Settings:',
         sprintf('Upper Threshold: %.1fσ', config.event_detection.upper_threshold_sigma),
@@ -237,8 +178,10 @@ function fig = create_event_detection_summary(event_stats, metadata, config)
         '',
         'Performance:',
         sprintf('Mean Duration: %.1f frames (%.0f ms)', ...
-            mean_duration, mean_duration * 1000 / config.frame_rate),
-        sprintf('Event Coverage: %.1f%% of total frames', 100 * fraction_frames)
+            event_stats.mean_event_duration, ...
+            event_stats.mean_event_duration * 1000 / config.frame_rate),
+        sprintf('Event Coverage: %.1f%% of total frames', ...
+            100 * event_stats.fraction_frames_in_events)
     };
     
     text(0.05, 0.95, summary_text, 'FontSize', 10, 'VerticalAlignment', 'top', ...
@@ -248,15 +191,7 @@ function fig = create_event_detection_summary(event_stats, metadata, config)
 end
 
 function fig = create_active_roi_examples(dfof_data, event_mask, event_stats, time_vector, metadata, config)
-    % Show examples of most active ROIs
-    
-    if ~isfield(event_stats, 'events_per_roi') || isempty(event_stats.events_per_roi)
-        fig = figure('Name', sprintf('Active ROIs - %s', metadata.filename));
-        text(0.5, 0.5, 'No event data available for active ROI display', ...
-            'HorizontalAlignment', 'center', 'VerticalAlignment', 'middle', 'FontSize', 14);
-        title('Active ROIs - NO DATA');
-        return;
-    end
+    % Show examples of most active ROIs with detailed event markings
     
     % Select top 8 most active ROIs
     [~, active_idx] = sort(event_stats.events_per_roi, 'descend');
@@ -265,8 +200,8 @@ function fig = create_active_roi_examples(dfof_data, event_mask, event_stats, ti
     fig = figure('Name', sprintf('Most Active ROIs - %s', metadata.filename), ...
         'Position', [300, 100, 1400, 900]);
     
-    rows = 4;
-    cols = 2;
+    rows = 2;
+    cols = 4;
     
     for i = 1:length(top_active)
         roi_idx = top_active(i);
@@ -278,13 +213,22 @@ function fig = create_active_roi_examples(dfof_data, event_mask, event_stats, ti
         plot(time_vector, trace, 'k-', 'LineWidth', 0.8);
         hold on;
         
-        % Highlight events
-        if size(event_mask, 2) >= roi_idx
-            events = event_mask(:, roi_idx);
-            if any(events)
-                event_trace = trace;
-                event_trace(~events) = NaN;
-                plot(time_vector, event_trace, 'r-', 'LineWidth', 3);
+        % Highlight events with different colors for different event episodes
+        events = event_mask(:, roi_idx);
+        if any(events)
+            % Find individual event episodes
+            event_starts = find(diff([false; events]) == 1);
+            event_ends = find(diff([events; false]) == -1);
+            
+            % Color each event episode differently
+            colors = lines(length(event_starts));
+            
+            for e = 1:length(event_starts)
+                event_frames = event_starts(e):event_ends(e);
+                event_trace = NaN(size(trace));
+                event_trace(event_frames) = trace(event_frames);
+                
+                plot(time_vector, event_trace, 'Color', colors(e, :), 'LineWidth', 3);
             end
         end
         
@@ -307,7 +251,7 @@ function fig = create_active_roi_examples(dfof_data, event_mask, event_stats, ti
         title(sprintf('ROI %d: %d events, max=%.3f', roi_idx, num_events, max_response), 'FontSize', 10);
         grid on;
         
-        % Set y-limits
+        % Set y-limits to show events clearly
         y_range = [min(trace, [], 'omitnan'), max(trace, [], 'omitnan')];
         if diff(y_range) > 0
             y_margin = diff(y_range) * 0.15;
@@ -322,11 +266,6 @@ end
 function sample_rois = select_representative_rois(event_stats, num_samples)
     % Select ROIs representing different activity levels
     
-    if ~isfield(event_stats, 'events_per_roi') || isempty(event_stats.events_per_roi)
-        sample_rois = 1:min(num_samples, 100);  % Default to first few ROIs
-        return;
-    end
-    
     events_per_roi = event_stats.events_per_roi;
     numROIs = length(events_per_roi);
     
@@ -336,12 +275,43 @@ function sample_rois = select_representative_rois(event_stats, num_samples)
     end
     
     % Sort ROIs by activity level
-    [~, sort_idx] = sort(events_per_roi, 'descend');
+    [sorted_events, sort_idx] = sort(events_per_roi, 'descend');
     
-    % Select evenly distributed samples
-    step = max(1, floor(numROIs / num_samples));
-    sample_rois = sort_idx(1:step:end);
+    % Select ROIs from different activity quartiles
+    sample_rois = [];
+    
+    % High activity (top 25%)
+    high_end = ceil(length(sort_idx) * 0.25);
+    n_high = ceil(num_samples * 0.4);
+    sample_rois = [sample_rois, sort_idx(1:min(n_high, high_end))];
+    
+    % Medium activity (25-75%)
+    med_start = high_end + 1;
+    med_end = ceil(length(sort_idx) * 0.75);
+    n_med = ceil(num_samples * 0.4);
+    med_candidates = sort_idx(med_start:med_end);
+    if ~isempty(med_candidates)
+        step = max(1, floor(length(med_candidates) / n_med));
+        sample_rois = [sample_rois, med_candidates(1:step:end)];
+    end
+    
+    % Low activity (bottom 25%)
+    low_start = med_end + 1;
+    n_low = num_samples - length(sample_rois);
+    low_candidates = sort_idx(low_start:end);
+    if ~isempty(low_candidates) && n_low > 0
+        sample_rois = [sample_rois, low_candidates(1:min(n_low, length(low_candidates)))];
+    end
+    
+    % Ensure we have exactly num_samples
     sample_rois = sample_rois(1:min(num_samples, length(sample_rois)));
+    
+    % Fill with random ROIs if needed
+    if length(sample_rois) < num_samples
+        remaining = setdiff(1:numROIs, sample_rois);
+        n_fill = num_samples - length(sample_rois);
+        sample_rois = [sample_rois, remaining(1:min(n_fill, length(remaining)))];
+    end
     
     sample_rois = sort(sample_rois);
 end

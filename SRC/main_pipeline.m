@@ -176,11 +176,12 @@ function [fileResults, errors] = processFilesWithBaseline(dataCell, metadataArra
 end
 
 function fileResult = processSingleFileWithBaseline(data, metadata, options)
-    % Process a single file with IMPROVED error handling
+    % UPDATED VERSION: Uses new modular event detection
+    % REPLACE this function in your existing main_pipeline.m
     
     [numFrames, numROIs] = size(data);
     
-    % Load configuration
+    % Load configuration (now includes Schmitt trigger parameters)
     config = tracenorm_config();
     config.verbose = options.verbose && numROIs > 2000;
     
@@ -189,7 +190,7 @@ function fileResult = processSingleFileWithBaseline(data, metadata, options)
             numROIs, numel(data) * 4 / (1024^2));
     end
     
-    %% Baseline Calculation
+    %% === Baseline Calculation (unchanged) ===
     try
         tic;
         [baseline, outlier_mask, baseline_stats] = baseline_detector(data, config);
@@ -198,7 +199,7 @@ function fileResult = processSingleFileWithBaseline(data, metadata, options)
         error('Baseline calculation failed: %s', ME.message);
     end
     
-    %% dF/F Calculation
+    %% === dF/F Calculation (updated - no event detection) ===
     try
         tic;
         [dfof_data, dfof_stats] = dfof_calculator(data, baseline, config);
@@ -207,80 +208,105 @@ function fileResult = processSingleFileWithBaseline(data, metadata, options)
         error('dF/F calculation failed: %s', ME.message);
     end
     
-    %% Visualization (with better error handling)
+    %% === Event Detection (NEW - Schmitt trigger) ===
+    try
+        tic;
+        [event_mask, event_stats] = schmitt_event_detector(dfof_data, config);
+        event_time = toc;
+    catch ME
+        error('Event detection failed: %s', ME.message);
+    end
+    
+    %% === Quality Assessment (NEW - comprehensive) ===
+    try
+        tic;
+        quality_metrics = quality_assessor(data, baseline_stats, dfof_stats, event_stats, config);
+        quality_time = toc;
+    catch ME
+        error('Quality assessment failed: %s', ME.message);
+    end
+    
+    %% === Visualization (updated to handle events) ===
     plot_handles = [];
     plot_time = 0;
     
     if options.createPlots
         try
             tic;
+            % Use existing baseline_plotter (it should still work)
+            % or create enhanced version that shows events
             plot_handles = baseline_plotter(data, baseline, dfof_data, outlier_mask, ...
-                baseline_stats, dfof_stats, metadata, config);
+                baseline_stats, dfof_stats, metadata, config, event_stats);
             plot_time = toc;
             
             if options.savePlots
                 save_baseline_plots(plot_handles, metadata, options);
             end
         catch ME
-            warning('Plotting failed: %s', E.message);
+            warning('Plotting failed: %s', ME.message);
             if options.verbose
-                fprintf('      Skipping plots due to error: %s\n', E.message);
-                if ~isempty(ME.stack)
-                    fprintf('        Error in: %s (line %d)\n', ME.stack(1).name, ME.stack(1).line);
-                end
+                fprintf('      Skipping plots due to error: %s\n', ME.message);
             end
             plot_handles = [];
             plot_time = 0;
         end
     end
     
-    %% Compile Results - VERIFY all required fields exist
+    %% === Compile Results (updated structure) ===
     fileResult = struct();
     
-    % Basic info
+    % Basic info (unchanged)
     fileResult.filename = metadata.filename;
     fileResult.numFrames = numFrames;
     fileResult.numROIs = numROIs;
     fileResult.dataSize_MB = numel(data) * 4 / (1024^2);
     
-    % Results
+    % Results (updated with new modules)
     fileResult.baseline = baseline;
     fileResult.outlier_mask = outlier_mask;
     fileResult.baseline_stats = baseline_stats;
     fileResult.dfof_data = dfof_data;
     fileResult.dfof_stats = dfof_stats;
     
-    % Timing
+    % NEW: Event detection results
+    fileResult.event_mask = event_mask;
+    fileResult.event_stats = event_stats;
+    
+    % NEW: Comprehensive quality metrics  
+    fileResult.quality_metrics = quality_metrics;
+    
+    % Timing (updated)
     fileResult.timing = struct();
     fileResult.timing.baseline_time = baseline_time;
     fileResult.timing.dfof_time = dfof_time;
+    fileResult.timing.event_time = event_time;        % NEW
+    fileResult.timing.quality_time = quality_time;    % NEW
     fileResult.timing.plot_time = plot_time;
-    fileResult.timing.total_time = baseline_time + dfof_time + plot_time;
+    fileResult.timing.total_time = baseline_time + dfof_time + event_time + quality_time + plot_time;
     
     % Visualization
     fileResult.plot_handles = plot_handles;
     
-    % Quality metrics - VERIFY fields exist before accessing
+    % Summary metrics (for backward compatibility with existing code)
     fileResult.quality = struct();
     fileResult.quality.fraction_good_baseline = getFieldSafe(baseline_stats, 'fraction_good_rois', 0);
-    fileResult.quality.fraction_good_dfof = getFieldSafe(dfof_stats, 'fraction_good_rois', 0);
+    fileResult.quality.fraction_good_dfof = getFieldSafe(quality_metrics, 'fraction_good_rois', 0);
     fileResult.quality.mean_snr = getFieldSafe(dfof_stats, 'mean_snr', 0);
     fileResult.quality.transport_rois = getFieldSafe(baseline_stats, 'num_transport_rois', 0);
     
-    % Event summary - with safer field access
-    if isfield(dfof_stats, 'event_summary') && isfield(dfof_stats.event_summary, 'rois_with_events')
-        fileResult.quality.active_rois = dfof_stats.event_summary.rois_with_events;
-    else
-        fileResult.quality.active_rois = 0;
-    end
+    % NEW: Enhanced quality metrics
+    fileResult.quality.active_rois = getFieldSafe(quality_metrics.summary, 'active_rois', 0);
+    fileResult.quality.total_events = getFieldSafe(event_stats, 'total_events', 0);
+    fileResult.quality.mean_event_amplitude = getFieldSafe(event_stats, 'mean_event_amplitude', 0);
     
     if options.verbose && (fileResult.quality.transport_rois > 0 || fileResult.quality.active_rois > 0)
-        fprintf('      Results: %d transport ROIs, %d active ROIs, SNR=%.2f\n', ...
+        fprintf('      Results: %d transport ROIs, %d active ROIs, %d total events, SNR=%.2f\n', ...
             fileResult.quality.transport_rois, fileResult.quality.active_rois, ...
-            fileResult.quality.mean_snr);
+            fileResult.quality.total_events, fileResult.quality.mean_snr);
     end
 end
 
+% Keep this helper function (unchanged)
 function value = getFieldSafe(structure, fieldName, defaultValue)
     % Safely get field value with default fallback
     if isfield(structure, fieldName)

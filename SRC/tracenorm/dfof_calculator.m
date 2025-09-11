@@ -1,6 +1,6 @@
-function [dfof_data, dfof_stats] = dfof_calculator(raw_data, baseline, config)
+function [dfof_data, basic_stats] = dfof_calculator(raw_data, baseline, config)
     % DFOF_CALCULATOR - Calculate dF/F traces from raw data and baseline
-    % Implements: dF/F = (F - F0) / F0 where F0 is the baseline
+    % REFACTORED VERSION: Only handles dF/F calculation, no event detection
     %
     % Inputs:
     %   raw_data - [frames x ROIs] raw fluorescence intensity
@@ -8,8 +8,8 @@ function [dfof_data, dfof_stats] = dfof_calculator(raw_data, baseline, config)
     %   config   - Configuration struct from tracenorm_config()
     %
     % Outputs:
-    %   dfof_data  - [frames x ROIs] normalized dF/F traces
-    %   dfof_stats - Struct with dF/F calculation statistics
+    %   dfof_data    - [frames x ROIs] normalized dF/F traces
+    %   basic_stats  - Basic dF/F statistics (no events, no quality assessment)
     
     if nargin < 3
         config = tracenorm_config();
@@ -26,7 +26,7 @@ function [dfof_data, dfof_stats] = dfof_calculator(raw_data, baseline, config)
         error('Raw data and baseline must have same dimensions');
     end
     
-    % === Calculate dF/F ===
+    %% === Calculate dF/F ===
     switch config.dfof_method
         case 'divide'
             % Standard: dF/F = (F - F0) / F0
@@ -44,27 +44,28 @@ function [dfof_data, dfof_stats] = dfof_calculator(raw_data, baseline, config)
             error('Unknown dF/F method: %s', config.dfof_method);
     end
     
-    % Handle division by zero or very small baselines
+    %% === Handle Invalid Baselines ===
+    % Set very small or negative baselines to NaN
     invalid_baseline = baseline <= 0 | baseline < (0.01 * mean(baseline, 'all', 'omitnan'));
     dfof_data(invalid_baseline) = NaN;
     
-    % === Calculate dF/F Statistics ===
-    dfof_stats = calculate_dfof_stats(raw_data, baseline, dfof_data, config);
+    %% === Calculate Basic Statistics Only ===
+    basic_stats = calculate_basic_dfof_stats(raw_data, baseline, dfof_data);
     
     if config.verbose
         fprintf('  dF/F range: [%.3f, %.3f], %.1f%% valid values\n', ...
             min(dfof_data, [], 'all', 'omitnan'), ...
             max(dfof_data, [], 'all', 'omitnan'), ...
-            100 * dfof_stats.fraction_valid);
+            100 * basic_stats.fraction_valid);
     end
 end
 
-function stats = calculate_dfof_stats(raw_data, baseline, dfof_data, config)
-    % Calculate comprehensive dF/F statistics
+function stats = calculate_basic_dfof_stats(raw_data, baseline, dfof_data)
+    % Calculate basic dF/F statistics only (no events, no quality flags)
     
     [numFrames, numROIs] = size(dfof_data);
     
-    % === Basic Statistics ===
+    %% === Basic Statistics ===
     % Per-ROI statistics
     dfof_mean = mean(dfof_data, 1, 'omitnan');        % [1 x ROIs]
     dfof_std = std(dfof_data, 0, 1, 'omitnan');       % [1 x ROIs] 
@@ -76,28 +77,22 @@ function stats = calculate_dfof_stats(raw_data, baseline, dfof_data, config)
     baseline_std = std(baseline, 0, 1, 'omitnan');
     baseline_stability = baseline_std ./ baseline_mean;  % Coefficient of variation
     
-    % === Event Detection Metrics ===
-    % Simple peak detection for validation
-    event_threshold = 2 * dfof_std;  % 2 sigma above noise
-    potential_events = dfof_data > event_threshold;
-    events_per_roi = sum(potential_events, 1);
-    
-    % === Signal Quality Metrics ===
-    % Signal-to-noise ratio
+    %% === Signal Quality Metrics ===
+    % Signal-to-noise ratio (corrected calculation)
     peak_response = max(dfof_data, [], 1);
     median_dfof = median(dfof_data, 1);
     signal_amplitude = peak_response - median_dfof;
-    noise_estimate = mad(dfof_data, 1, 1) * 1.4826;
+    noise_estimate = mad(dfof_data, 1, 1) * 1.4826;  % Robust noise estimate
     snr = signal_amplitude ./ noise_estimate;
     
     % Dynamic range
     dynamic_range = dfof_max - dfof_min;
     
-    % === Data Validity ===
+    %% === Data Validity ===
     valid_data = ~isnan(dfof_data) & ~isinf(dfof_data);
     fraction_valid_per_roi = sum(valid_data, 1) / numFrames;
     
-    % === Compile Statistics ===
+    %% === Compile Basic Statistics ===
     stats = struct();
     
     % Per-ROI metrics
@@ -107,7 +102,8 @@ function stats = calculate_dfof_stats(raw_data, baseline, dfof_data, config)
     stats.dfof_min = dfof_min;
     stats.dynamic_range = dynamic_range;
     stats.snr = snr;
-    stats.events_per_roi = events_per_roi;
+    stats.signal_amplitude = signal_amplitude;
+    stats.noise_estimate = noise_estimate;
     stats.fraction_valid_per_roi = fraction_valid_per_roi;
     
     % Baseline metrics
@@ -120,27 +116,7 @@ function stats = calculate_dfof_stats(raw_data, baseline, dfof_data, config)
     stats.overall_max = max(dfof_max, [], 'omitnan');
     stats.overall_min = min(dfof_min, [], 'omitnan');
     stats.fraction_valid = sum(valid_data, 'all') / numel(dfof_data);
-    stats.mean_events_per_roi = mean(events_per_roi, 'omitnan');
     stats.mean_snr = mean(snr, 'omitnan');
     
-    % === Quality Flags ===
-    stats.quality_flags = struct();
-    stats.quality_flags.low_snr = snr < 2;                           % SNR < 2
-    stats.quality_flags.unstable_baseline = baseline_stability > 0.2; % CV > 20%
-    stats.quality_flags.low_signal = dynamic_range < 0.1;            % Small dynamic range
-    stats.quality_flags.invalid_data = fraction_valid_per_roi < 0.8;  % <80% valid data
-    
-    % Summary quality metrics
-    stats.num_low_quality = sum(stats.quality_flags.low_snr | ...
-                               stats.quality_flags.unstable_baseline | ...
-                               stats.quality_flags.low_signal | ...
-                               stats.quality_flags.invalid_data);
-    stats.fraction_good_rois = 1 - (stats.num_low_quality / numROIs);
-    
-    % === Event Detection Summary ===
-    stats.event_summary = struct();
-    stats.event_summary.rois_with_events = sum(events_per_roi > 0);
-    stats.event_summary.total_events = sum(events_per_roi);
-    stats.event_summary.mean_events_per_active_roi = mean(events_per_roi(events_per_roi > 0));
-    stats.event_summary.fraction_active_rois = stats.event_summary.rois_with_events / numROIs;
+    % NOTE: No event detection or quality flags - these are handled by separate modules
 end
