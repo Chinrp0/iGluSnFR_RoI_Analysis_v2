@@ -93,6 +93,22 @@ function [event_mask, event_stats] = corrected_schmitt_detector(dfof_data, confi
             event_stats.total_events, event_stats.rois_with_events);
         fprintf('  Mean duration: %.1f frames (%.0f ms)\n', ...
             event_stats.mean_event_duration, event_stats.mean_event_duration * 1000 / config.frame_rate);
+        
+        % NEW: Display frequency and peak amplitude information
+        if event_stats.rois_with_events > 0
+            fprintf('  Event frequency: %.3f Hz avg (range: %.3f-%.3f Hz)\n', ...
+                event_stats.mean_frequency_across_active_rois, ...
+                event_stats.frequency_range(1), event_stats.frequency_range(2));
+            fprintf('  Peak amplitude: %.4f dF/F avg (range: %.4f-%.4f dF/F)\n', ...
+                event_stats.mean_peak_amplitude_across_active_rois, ...
+                event_stats.peak_amplitude_range_across_rois(1), event_stats.peak_amplitude_range_across_rois(2));
+        else
+            fprintf('  Event frequency: 0 Hz (no active ROIs)\n');
+            fprintf('  Peak amplitude: 0 dF/F (no events detected)\n');
+        end
+        
+        fprintf('  Recording time: %.1f s (%.1f min)\n', ...
+            event_stats.recording_time_seconds, event_stats.recording_time_seconds / 60);
         fprintf('  Noise method: CORRECTED (outliers included, sustained excluded)\n');
     end
 end
@@ -366,23 +382,36 @@ end
 
 function stats = calculate_corrected_event_statistics(event_mask, dfof_data, upper_threshold, ...
     lower_threshold, noise_metrics, config)
-    % Calculate comprehensive event statistics for corrected implementation
+    % Calculate comprehensive event statistics with ENHANCED per-ROI peak amplitudes and frequency
     
     [numFrames, numROIs] = size(event_mask);
+    
+    % Calculate total recording time
+    total_time_seconds = numFrames / config.frame_rate;  % For frequency calculation
     
     % Basic counts
     event_frames_per_roi = sum(event_mask, 1);
     rois_with_events = sum(event_frames_per_roi > 0);
     total_event_frames = sum(event_mask, 'all');
     
-    % Detailed event analysis
-    event_durations = [];
-    event_amplitudes = [];
+    % ENHANCED: Per-ROI detailed event analysis
+    event_durations = [];  % Flat array for backward compatibility
+    event_amplitudes = []; % Flat array for backward compatibility
     events_per_roi = zeros(1, numROIs);
+    
+    % NEW: Per-ROI data structures
+    peak_amplitudes_per_roi = cell(1, numROIs);     % Cell array: {roi} = [peak1, peak2, ...]
+    mean_peak_amplitude_per_roi = zeros(1, numROIs); % Mean peak amplitude per ROI
+    frequency_hz = zeros(1, numROIs);                % Event frequency per ROI
+    event_durations_per_roi = cell(1, numROIs);     % Duration of each event per ROI
     
     for roi = 1:numROIs
         roi_events = event_mask(:, roi);
         roi_dfof = dfof_data(:, roi);
+        
+        % Initialize per-ROI storage
+        roi_peak_amplitudes = [];
+        roi_event_durations = [];
         
         if any(roi_events)
             % Find discrete events
@@ -390,36 +419,52 @@ function stats = calculate_corrected_event_statistics(event_mask, dfof_data, upp
             event_ends = find(diff([roi_events; false]) == -1);
             events_per_roi(roi) = length(event_starts);
             
-            % Analyze each event
+            % Analyze each event for this ROI
             for e = 1:length(event_starts)
                 start_frame = event_starts(e);
                 end_frame = event_ends(e);
                 
                 % Duration
                 duration = end_frame - start_frame + 1;
-                event_durations(end+1) = duration;
+                event_durations(end+1) = duration;  % Flat array (backward compatibility)
+                roi_event_durations(end+1) = duration;  % Per-ROI array
                 
-                % Peak amplitude
+                % Peak amplitude within event
                 event_segment = roi_dfof(start_frame:end_frame);
                 if any(~isnan(event_segment))
                     max_amplitude = max(event_segment, [], 'omitnan');
-                    event_amplitudes(end+1) = max_amplitude;
+                    event_amplitudes(end+1) = max_amplitude;  % Flat array (backward compatibility)
+                    roi_peak_amplitudes(end+1) = max_amplitude;  % Per-ROI array
                 end
             end
         end
+        
+        % Store per-ROI data
+        peak_amplitudes_per_roi{roi} = roi_peak_amplitudes;
+        event_durations_per_roi{roi} = roi_event_durations;
+        
+        % Calculate mean peak amplitude for this ROI
+        if ~isempty(roi_peak_amplitudes)
+            mean_peak_amplitude_per_roi(roi) = mean(roi_peak_amplitudes);
+        else
+            mean_peak_amplitude_per_roi(roi) = 0;  % No events
+        end
+        
+        % Calculate frequency in Hz for this ROI
+        frequency_hz(roi) = events_per_roi(roi) / total_time_seconds;
     end
     
     % Compile statistics
     stats = struct();
     
-    % Basic counts
+    % Basic counts (unchanged for backward compatibility)
     stats.total_events = sum(events_per_roi);
     stats.total_event_frames = total_event_frames;
     stats.rois_with_events = rois_with_events;
     stats.events_per_roi = events_per_roi;
     stats.event_frames_per_roi = event_frames_per_roi;
     
-    % Event characteristics
+    % Event characteristics (backward compatibility)
     if ~isempty(event_durations)
         stats.mean_event_duration = mean(event_durations);
         stats.median_event_duration = median(event_durations);
@@ -440,17 +485,48 @@ function stats = calculate_corrected_event_statistics(event_mask, dfof_data, upp
         stats.event_amplitude_range = [0, 0];
     end
     
-    % Threshold information
+    % NEW: Enhanced per-ROI event metrics
+    stats.peak_amplitudes_per_roi = peak_amplitudes_per_roi;        % Cell array: {roi} = [peak1, peak2, ...]
+    stats.mean_peak_amplitude_per_roi = mean_peak_amplitude_per_roi; % [1 x numROIs] mean peak per ROI
+    stats.frequency_hz = frequency_hz;                              % [1 x numROIs] event frequency in Hz
+    stats.event_durations_per_roi = event_durations_per_roi;        % Cell array: {roi} = [dur1, dur2, ...]
+    
+    % NEW: Summary metrics for comparison analysis
+    stats.recording_time_seconds = total_time_seconds;
+    stats.active_roi_frequencies = frequency_hz(frequency_hz > 0);  % Only ROIs with events
+    stats.active_roi_mean_peaks = mean_peak_amplitude_per_roi(mean_peak_amplitude_per_roi > 0);  % Only ROIs with events
+    
+    if ~isempty(stats.active_roi_frequencies)
+        stats.mean_frequency_across_active_rois = mean(stats.active_roi_frequencies);
+        stats.median_frequency_across_active_rois = median(stats.active_roi_frequencies);
+        stats.frequency_range = [min(stats.active_roi_frequencies), max(stats.active_roi_frequencies)];
+    else
+        stats.mean_frequency_across_active_rois = 0;
+        stats.median_frequency_across_active_rois = 0;
+        stats.frequency_range = [0, 0];
+    end
+    
+    if ~isempty(stats.active_roi_mean_peaks)
+        stats.mean_peak_amplitude_across_active_rois = mean(stats.active_roi_mean_peaks);
+        stats.median_peak_amplitude_across_active_rois = median(stats.active_roi_mean_peaks);
+        stats.peak_amplitude_range_across_rois = [min(stats.active_roi_mean_peaks), max(stats.active_roi_mean_peaks)];
+    else
+        stats.mean_peak_amplitude_across_active_rois = 0;
+        stats.median_peak_amplitude_across_active_rois = 0;
+        stats.peak_amplitude_range_across_rois = [0, 0];
+    end
+    
+    % Threshold information (unchanged)
     stats.upper_thresholds = upper_threshold;
     stats.lower_thresholds = lower_threshold;
     stats.mean_upper_threshold = mean(upper_threshold, 'omitnan');
     stats.mean_lower_threshold = mean(lower_threshold, 'omitnan');
     
-    % Detection efficiency
+    % Detection efficiency (unchanged)
     stats.fraction_rois_with_events = rois_with_events / numROIs;
     stats.fraction_frames_in_events = total_event_frames / numel(event_mask);
     
-    % Backward compatibility
+    % Backward compatibility (unchanged)
     stats.event_summary = struct();
     stats.event_summary.rois_with_events = rois_with_events;
     stats.event_summary.total_events = stats.total_events;
@@ -459,5 +535,20 @@ function stats = calculate_corrected_event_statistics(event_mask, dfof_data, upp
         stats.event_summary.mean_events_per_active_roi = mean(events_per_roi(events_per_roi > 0));
     else
         stats.event_summary.mean_events_per_active_roi = 0;
+    end
+    
+    % NEW: Clearer field names for peak amplitude access
+    stats.all_event_peaks = event_amplitudes;  % CLEAR: All individual peaks flattened across ROIs
+    stats.num_total_events = length(event_amplitudes);  % Total number of individual events detected
+    
+    % Summary statistics for all individual events
+    if ~isempty(event_amplitudes)
+        stats.mean_all_peaks = mean(event_amplitudes);      % Mean of ALL individual peaks
+        stats.median_all_peaks = median(event_amplitudes);  % Median of ALL individual peaks
+        stats.std_all_peaks = std(event_amplitudes);        % Standard deviation of ALL peaks
+    else
+        stats.mean_all_peaks = 0;
+        stats.median_all_peaks = 0;
+        stats.std_all_peaks = 0;
     end
 end

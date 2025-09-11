@@ -219,6 +219,19 @@ function fileResult = processSingleFileWithCorrectedDetector(data, metadata, opt
         error('Baseline calculation failed: %s', ME.message);
     end
     
+    %% === FIX 3: Ensure baseline_stats has outlier_mask BEFORE event detection ===
+    if ~isfield(baseline_stats, 'outlier_mask')
+        if config.verbose
+            fprintf('      DEBUG: Adding missing outlier_mask to baseline_stats\n');
+        end
+        baseline_stats.outlier_mask = outlier_mask;  % Add the outlier_mask that was returned
+    end
+    
+    %% === FIX 2: Debug output (optional - you can remove this once working) ===
+    if config.verbose && numROIs > 1000
+        fprintf('      baseline_stats fields: %s\n', strjoin(fieldnames(baseline_stats), ', '));
+    end
+    
     %% === dF/F Calculation ===
     try
         tic;
@@ -288,7 +301,7 @@ function fileResult = processSingleFileWithCorrectedDetector(data, metadata, opt
         try
             tic;
             % FIXED: Pass all required arguments with consistent data structure
-            plot_handles = baseline_plotter(data, baseline, dfof_data, outlier_mask, ...
+            plot_handles = baseline_plotter_clean(data, baseline, dfof_data, outlier_mask, ...
                 baseline_stats, dfof_stats, metadata, config, event_stats);
             plot_time = toc;
             
@@ -502,9 +515,18 @@ function summary = createSummaryStats(fileResults, metadataArray, loadTime, proc
         plot_times = arrayfun(@(r) getFieldSafe(r.timing, 'plot_time', 0), [fileResults{:}]);
         
         % NEW: Detector tracking
-        detectors_used = {fileResults.detectorUsed};
+        detectors_used = cell(1, length(fileResults));
+        for i = 1:length(fileResults)
+            if ~isempty(fileResults{i}) && isfield(fileResults{i}, 'detectorUsed')
+                detectors_used{i} = fileResults{i}.detectorUsed;
+            else
+                detectors_used{i} = 'unknown';
+            end
+        end
+
         corrected_count = sum(strcmp(detectors_used, 'corrected_schmitt'));
         legacy_count = sum(strcmp(detectors_used, 'legacy_schmitt'));
+
         
         % Build summary
         summary = struct();
