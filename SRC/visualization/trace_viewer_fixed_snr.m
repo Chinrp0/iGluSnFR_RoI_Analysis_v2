@@ -5,7 +5,7 @@ clear; clc; close all;
 
 %% === EASY CONFIGURATION ===
 NUM_TRACES = 16;                    % How many traces to show
-SELECTION_MODE = 'most_events';     % 'most_events', 'highest_snr', 'largest_amplitude', 'mixed'
+SELECTION_MODE = 'highest_snr';     % 'most_events', 'highest_snr', 'largest_amplitude', 'mixed'
 
 % UPDATED filtering criteria based on corrected SNR
 MIN_EVENTS = 10;                    % Minimum events (median was 39)
