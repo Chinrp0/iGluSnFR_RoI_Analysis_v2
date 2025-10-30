@@ -80,11 +80,11 @@ function results = integrated_batch_analysis_final(folder_path, options)
         
         comparison = compare_conditions_statistical_integrated(wt_data, mut_data);
         
-        %% Step 5: Create comparison visualizations with INTEGRATED FIXED PLOTTING
+        %% Step 5: Create core comparison visualizations
         plot_handles = [];
         if options.createPlots
             if options.verbose
-                fprintf('\nStep 5: Creating improved comparison plots...\n');
+                fprintf('\nStep 5: Creating core comparison plots...\n');
             end
             
             plot_handles = create_plots_integrated_final(wt_data, mut_data, comparison);
@@ -94,7 +94,7 @@ function results = integrated_batch_analysis_final(folder_path, options)
             end
         end
         
-        %% Compile results
+        %% Step 5.5: ASSEMBLE RESULTS STRUCTURE (before Step 6!)
         results = struct();
         results.wt_data = wt_data;
         results.mut_data = mut_data;
@@ -107,6 +107,88 @@ function results = integrated_batch_analysis_final(folder_path, options)
         results.processing_info.mut_files = mut_files;
         results.processing_info.process_time = process_time;
         results.processing_info.timestamp = datetime('now');
+        results.processing_info.frame_rate = getfield_safe(options, 'frame_rate', 100);
+        results.processing_info.recording_duration_s = getfield_safe(options, 'recording_duration_s', 30);
+
+       %% Step 6: Create ADDITIONAL modular visualizations
+        additional_plots = struct();
+        
+        if options.createPlots && options.verbose
+            fprintf('\nStep 6: Creating additional analysis plots...\n');
+        end
+        
+        % Inter-Event Interval analysis
+        if options.createPlots && getfield_safe(options, 'create_iei_plot', true)
+            try
+                plot_options = struct('frame_rate', options.frame_rate);
+                additional_plots.iei_comparison = plot_iei_comparison(results, plot_options);
+            catch ME
+                fprintf('  WARNING: Failed to create IEI plot: %s\n', ME.message);
+            end
+        end
+        
+        % Amplitude-Frequency correlation
+        if options.createPlots && getfield_safe(options, 'create_amp_freq_correlation', true)
+            try
+                plot_options = struct('frame_rate', options.frame_rate);
+                additional_plots.amp_freq_correlation = plot_amplitude_frequency_correlation(results, plot_options);
+            catch ME
+                fprintf('  WARNING: Failed to create amp-freq correlation plot: %s\n', ME.message);
+            end
+        end
+        
+        % Event timing raster
+        if options.createPlots && getfield_safe(options, 'create_event_raster', true)
+            try
+                plot_options = struct('frame_rate', options.frame_rate, ...
+                    'recording_duration_s', options.recording_duration_s);
+                additional_plots.event_raster = plot_event_raster(results, plot_options);
+            catch ME
+                fprintf('  WARNING: Failed to create event raster plot: %s\n', ME.message);
+            end
+        end
+        
+        % Biological variability
+        if options.createPlots && getfield_safe(options, 'create_biological_variability', true)
+            try
+                additional_plots.biological_variability = plot_biological_variability(results);
+            catch ME
+                fprintf('  WARNING: Failed to create biological variability plot: %s\n', ME.message);
+            end
+        end
+        
+        % ROI recruitment curves
+        if options.createPlots && getfield_safe(options, 'create_recruitment_curves', true)
+            try
+                additional_plots.recruitment_curves = plot_roi_recruitment_curves(results);
+            catch ME
+                fprintf('  WARNING: Failed to create recruitment curves: %s\n', ME.message);
+            end
+        end
+        
+        % Cumulative event count
+        if options.createPlots && getfield_safe(options, 'create_cumulative_events', true)
+            try
+                plot_options = struct('frame_rate', options.frame_rate, ...
+                    'recording_duration_s', options.recording_duration_s);
+                additional_plots.cumulative_events = plot_cumulative_events_over_time(results, plot_options);
+            catch ME
+                fprintf('  WARNING: Failed to create cumulative events plot: %s\n', ME.message);
+            end
+        end
+        
+        % ROI trace comparison
+        if options.createPlots && getfield_safe(options, 'create_roi_traces', true)
+            try
+                plot_options = struct('frame_rate', options.frame_rate);
+                additional_plots.roi_traces = plot_condition_roi_traces(results, plot_options);
+            catch ME
+                fprintf('  WARNING: Failed to create ROI traces: %s\n', ME.message);
+            end
+        end
+        
+        % Store additional plots in results
+        results.additional_plots = additional_plots;
         
         % Print summary
         if options.verbose
@@ -686,3 +768,13 @@ end
 function save_condition_plots_integrated(plot_handles, folder_path)
     % Optional plot saving
 end
+
+function value = getfield_safe(s, field, default)
+    % Safely get field with default value
+    if isfield(s, field)
+        value = s.(field);
+    else
+        value = default;
+    end
+end
+
