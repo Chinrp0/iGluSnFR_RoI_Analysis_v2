@@ -1,0 +1,293 @@
+========================================================================
+NEW VISUALIZATION MODULES - QUICK REFERENCE
+========================================================================
+Created: 2025-10-30
+For: GluSnFR iGluSnFR ROI Analysis Pipeline
+Data: 3000 frames @ 10ms exposure (100 Hz, 30s recordings)
+
+========================================================================
+DELIVERED FILES (6 NEW MATLAB FUNCTIONS)
+========================================================================
+
+1. plot_iei_comparison.m
+   └─ Inter-event interval analysis with CV and temporal patterning
+
+2. plot_amplitude_frequency_correlation.m
+   └─ Scatter plots testing amplitude-frequency coupling
+
+3. plot_event_raster.m
+   └─ Event timing raster plots showing population synchrony
+
+4. plot_biological_variability.m
+   └─ Per-file reproducibility and coefficient of variation
+
+5. plot_roi_recruitment_curves.m
+   └─ ROI activation across different frequency thresholds
+
+6. plot_cumulative_events_over_time.m
+   └─ Detection of rundown, buildup, or constant activity
+
+========================================================================
+DOCUMENTATION FILES (3 GUIDES)
+========================================================================
+
+1. NEW_VISUALIZATION_MODULES_GUIDE.txt
+   └─ Complete user manual with examples and scientific rationale
+
+2. INTEGRATION_INSTRUCTIONS.txt
+   └─ Step-by-step integration into existing code
+
+3. THIS FILE: QUICK_REFERENCE.txt
+   └─ Quick lookup and summary
+
+========================================================================
+MINIMAL WORKING EXAMPLE
+========================================================================
+
+```matlab
+% Setup
+cd('YOUR_SRC_DIRECTORY')
+setup_pipeline
+
+% Run analysis with all new plots
+folder_path = 'D:\Data\...\5_raw_mean';
+options = struct('frame_rate', 100, 'recording_duration_s', 30);
+results = integrated_batch_analysis_final(folder_path, options);
+
+% Access plots
+core_plots = results.plot_handles;  % 4 original plots
+new_plots = results.additional_plots;  % 6 new plots
+```
+
+========================================================================
+FUNCTION CALL SIGNATURES
+========================================================================
+
+All functions follow the same pattern:
+    fig = function_name(results, options)
+
+Where:
+- results = output from integrated_batch_analysis_final()
+- options = struct with plotting preferences (optional)
+- fig = figure handle (can be saved, modified, etc.)
+
+Common options:
+- options.frame_rate = 100  % Hz (REQUIRED for timing analysis)
+- options.recording_duration_s = 30  % seconds
+- options.max_rois_per_plot = 100  % For raster plots
+- options.max_iei_s = 10  % For IEI plots
+
+========================================================================
+WHAT EACH MODULE REVEALS
+========================================================================
+
+IEI ANALYSIS:
+→ Are events regular (periodic) or random (Poisson)?
+→ CV < 1: Regular, CV = 1: Random, CV > 1: Bursting
+→ Tests temporal patterning differences between WT and R213W
+
+AMPLITUDE-FREQUENCY CORRELATION:
+→ Do high-frequency ROIs have larger or smaller events?
+→ Positive r: frequent = large, Negative r: frequent = small
+→ Tests if release amplitude and frequency are coupled
+
+EVENT RASTER:
+→ Are events synchronized across population?
+→ Reveals bursts, oscillations, or independent firing
+→ Population rate changes over recording
+
+BIOLOGICAL VARIABILITY:
+→ How consistent are measurements across replicates?
+→ Lower CV = more reproducible phenotype
+→ Identifies outlier experiments
+
+ROI RECRUITMENT:
+→ At what frequency threshold do conditions diverge?
+→ More informative than single "active %" metric
+→ Shows full spectrum of activity levels
+
+CUMULATIVE EVENTS:
+→ Does activity increase (buildup) or decrease (rundown)?
+→ Linear (R² ≈ 1) = stable activity
+→ Curvature indicates activity changes over time
+
+========================================================================
+KEY SCIENTIFIC INSIGHTS FROM EACH MODULE
+========================================================================
+
+Your current data shows:
+- WT: 17.4% active ROIs, 0.021 Hz mean frequency
+- R213W: 17.3% active ROIs, 0.029 Hz mean frequency
+- Similar recruitment, but R213W fires faster (p = 0.014)
+
+What each module will add:
+
+1. IEI → Does R213W fire more regularly or more randomly?
+2. Amp-Freq → Do R213W's faster events have different sizes?
+3. Raster → Is R213W activity more synchronized?
+4. Variability → Is the frequency difference consistent across all files?
+5. Recruitment → Does R213W have more high-frequency ROIs?
+6. Cumulative → Does R213W activity build up or stay constant?
+
+========================================================================
+FRAME RATE CRITICAL UPDATE
+========================================================================
+
+YOUR DATA HAS CHANGED:
+OLD: 1200 frames @ 25ms = 40 Hz = 30s
+NEW: 3000 frames @ 10ms = 100 Hz = 30s
+
+MUST SET: options.frame_rate = 100
+
+This affects:
+- Inter-event interval calculation (seconds)
+- Event timing in raster plots (x-axis)
+- Instantaneous rate calculation (events/s)
+- Cumulative event timing (x-axis)
+
+All new modules DEFAULT to 100 Hz, but you should set it explicitly:
+```matlab
+options.frame_rate = 100;
+options.recording_duration_s = 30;
+```
+
+========================================================================
+SELECTIVE PLOTTING
+========================================================================
+
+To skip specific plots:
+
+```matlab
+options.create_iei_plot = false;  % Skip IEI
+options.create_amp_freq_correlation = false;  % Skip correlation
+options.create_event_raster = false;  % Skip raster (memory-intensive)
+options.create_biological_variability = false;  % Skip variability
+options.create_recruitment_curves = false;  % Skip recruitment
+options.create_cumulative_events = false;  % Skip cumulative
+```
+
+Or create ONLY specific plots:
+
+```matlab
+% Disable all
+options.createPlots = false;
+
+% Run analysis
+results = integrated_batch_analysis_final(folder_path, options);
+
+% Manually create just what you need
+fig1 = plot_iei_comparison(results, struct('frame_rate', 100));
+fig2 = plot_biological_variability(results);
+```
+
+========================================================================
+MEMORY USAGE
+========================================================================
+
+Approximate memory per plot:
+- IEI comparison: Low (~50 MB)
+- Amp-freq correlation: Low (~50 MB)
+- Event raster: HIGH (~500 MB for large datasets)
+- Biological variability: Low (~50 MB)
+- Recruitment curves: Low (~50 MB)
+- Cumulative events: Medium (~100 MB)
+
+If memory constrained:
+options.create_event_raster = false;  % Skip most intensive
+options.max_rois_per_plot = 50;  % Reduce raster size if needed
+
+========================================================================
+PUBLICATION RECOMMENDATIONS
+========================================================================
+
+MAIN FIGURE (required):
+- Frequency comparison (core plot 1)
+- Amplitude comparison (core plot 2)
+- Biological variability (NEW - shows reproducibility)
+
+SUPPLEMENTAL FIGURES (choose 2-3):
+- ROI recruitment curves (NEW - comprehensive activity view)
+- IEI analysis (NEW - temporal patterning)
+- Representative traces (existing plot_condition_roi_traces)
+
+OPTIONAL SUPPLEMENTAL:
+- Event raster (NEW - population dynamics)
+- Cumulative events (NEW - stability)
+- Amp-freq correlation (NEW - mechanism)
+- File summary (core plot 4)
+
+========================================================================
+FILE ORGANIZATION
+========================================================================
+
+Recommended directory structure:
+
+SRC/
+├── main_pipeline.m
+├── integrated_batch_analysis_final.m
+├── plot_condition_roi_traces.m
+├── setup_pipeline.m
+│
+├── [NEW MODULES]
+├── plot_iei_comparison.m
+├── plot_amplitude_frequency_correlation.m
+├── plot_event_raster.m
+├── plot_biological_variability.m
+├── plot_roi_recruitment_curves.m
+└── plot_cumulative_events_over_time.m
+
+========================================================================
+TESTING CHECKLIST
+========================================================================
+
+After installation, verify:
+
+☐ Run setup_pipeline → No errors
+☐ Test with createPlots = false → Should work as before
+☐ Test with all plots → Should create 11 figures
+☐ Test selective plotting → Only requested plots appear
+☐ Check frame rate → Events at reasonable times (0-30s range)
+☐ Verify statistics → p-values match between runs
+
+========================================================================
+GETTING HELP
+========================================================================
+
+If something isn't working:
+
+1. Check that all 6 new .m files are in SRC directory
+2. Run setup_pipeline to refresh MATLAB path
+3. Verify options.frame_rate = 100
+4. Check that results.file_results contains event data
+5. Try creating plots independently (standalone mode)
+6. Check console output for specific error messages
+
+Common fixes:
+- "Undefined function" → Run setup_pipeline
+- "Insufficient data" → Check that events were detected
+- "Index exceeds bounds" → Check frame_rate setting
+- Empty plots → Verify results structure has data
+
+========================================================================
+CONTACT INFORMATION
+========================================================================
+
+These modules were created for the GluSnFR iGluSnFR ROI Analysis Pipeline
+Updated for 3000-frame recordings at 10ms exposure (100 Hz, 30s total)
+
+For questions about:
+- Module functionality → See NEW_VISUALIZATION_MODULES_GUIDE.txt
+- Integration steps → See INTEGRATION_INSTRUCTIONS.txt
+- Quick reference → This file
+
+========================================================================
+VERSION HISTORY
+========================================================================
+
+v1.0 (2025-10-30):
+- Initial release of 6 visualization modules
+- Updated for 100 Hz sampling rate (10ms exposure)
+- Modular design for standalone or integrated use
+- Comprehensive documentation and examples
+
+========================================================================
