@@ -146,13 +146,13 @@ function plot_handles = create_plots_integrated_final(wt_data, mut_data, compari
 end
 
 function fig = create_frequency_plot_final(wt_data, mut_data, comparison)
-    % FREQUENCY PLOT: 0.01 Hz bins, mean labels on box plot
+    % FREQUENCY PLOT: 0.01 Hz bins, includes inactive ROIs
     
-    fig = figure('Name', 'Event Frequency Comparison: WT vs R213W (Active ROIs Only)', ...
+    fig = figure('Name', 'Event Frequency Comparison: WT vs R213W (All ROIs)', ...
         'Position', [100, 100, 1200, 800]);
     
-    wt_freqs = wt_data.all_roi_frequencies(wt_data.all_roi_frequencies > 0);
-    mut_freqs = mut_data.all_roi_frequencies(mut_data.all_roi_frequencies > 0);
+    wt_freqs = wt_data.all_roi_frequencies;  % Include ALL ROIs (including 0 Hz)
+    mut_freqs = mut_data.all_roi_frequencies;
     
     % Subplot 1: Clean histogram with 0.01 Hz bins
     subplot(2, 2, 1);
@@ -161,13 +161,13 @@ function fig = create_frequency_plot_final(wt_data, mut_data, comparison)
 
     hold on;
     histogram(wt_freqs, edges, 'FaceColor', [0.2, 0.6, 1.0], 'FaceAlpha', 0.7, ...
-        'EdgeColor', 'none', 'DisplayName', sprintf('WT (n=%d active ROIs)', length(wt_freqs)));
+        'EdgeColor', 'none', 'DisplayName', sprintf('WT (n=%d ROIs)', length(wt_freqs)));
     histogram(mut_freqs, edges, 'FaceColor', [1.0, 0.4, 0.2], 'FaceAlpha', 0.7, ...
-        'EdgeColor', 'none', 'DisplayName', sprintf('R213W (n=%d active ROIs)', length(mut_freqs)));
-    
+        'EdgeColor', 'none', 'DisplayName', sprintf('R213W (n=%d ROIs)', length(mut_freqs)));
+
     xlabel('Event Frequency (Hz)');
     ylabel('Active ROI Count');
-    title('Event Frequency Distribution (Active ROIs Only)');
+    title('Event Frequency Distribution (All ROIs Only)');
     legend('Location', 'best');
     grid on;
     
@@ -252,16 +252,16 @@ function fig = create_frequency_plot_final(wt_data, mut_data, comparison)
     text(0.05, 0.95, summary_text, 'FontSize', 10, 'VerticalAlignment', 'top', ...
         'HorizontalAlignment', 'left', 'Units', 'normalized', 'FontName', 'FixedWidth');
     
-    sgtitle('Event Frequency Comparison: WT vs R213W (Active ROIs Only)', 'FontSize', 16, 'FontWeight', 'bold');
+sgtitle('Event Frequency Comparison: WT vs R213W (All ROIs)', 'FontSize', 16, 'FontWeight', 'bold');
 end
 
 function fig = create_activity_plot_final(wt_data, mut_data, comparison)
-    % ACTIVITY PLOT: Active ROIs only (no 0-event ROIs)
+    % ACTIVITY PLOT: All ROIs including inactive
     
-    fig = figure('Name', 'Active ROI Comparison: WT vs R213W', 'Position', [300, 100, 1200, 800]);
+    fig = figure('Name', 'ROI Activity Comparison: WT vs R213W', 'Position', [300, 100, 1200, 800]);
     
-    wt_events = wt_data.all_roi_event_counts(wt_data.all_roi_event_counts > 0);
-    mut_events = mut_data.all_roi_event_counts(mut_data.all_roi_event_counts > 0);
+    wt_events = wt_data.all_roi_event_counts;  % Include ALL ROIs (including 0 events)
+    mut_events = mut_data.all_roi_event_counts;
     
     % Events per active ROI
     subplot(2, 2, 1);
@@ -270,11 +270,11 @@ function fig = create_activity_plot_final(wt_data, mut_data, comparison)
         edges = 0.5:1:(max_events + 0.5);
         
         hold on;
-        histogram(wt_events, edges, 'FaceColor', [0.2, 0.6, 1.0], 'FaceAlpha', 0.7, ...
-            'EdgeColor', 'none', 'DisplayName', sprintf('WT (n=%d active ROIs)', length(wt_events)));
-        histogram(mut_events, edges, 'FaceColor', [1.0, 0.4, 0.2], 'FaceAlpha', 0.7, ...
-            'EdgeColor', 'none', 'DisplayName', sprintf('R213W (n=%d active ROIs)', length(mut_events)));
-        
+    histogram(wt_events, edges, 'FaceColor', [0.2, 0.6, 1.0], 'FaceAlpha', 0.7, ...
+        'EdgeColor', 'none', 'DisplayName', sprintf('WT (n=%d ROIs)', length(wt_events)));
+    histogram(mut_events, edges, 'FaceColor', [1.0, 0.4, 0.2], 'FaceAlpha', 0.7, ...
+        'EdgeColor', 'none', 'DisplayName', sprintf('R213W (n=%d ROIs)', length(mut_events)));
+            
         xlabel('Events per ROI'); ylabel('Active ROI Count');
         title('Events per Active ROI Distribution'); legend('Location', 'best'); grid on;
     end
@@ -282,9 +282,13 @@ function fig = create_activity_plot_final(wt_data, mut_data, comparison)
     % Activity categories (active ROIs only)
     subplot(2, 2, 3);
     if ~isempty(wt_events) && ~isempty(mut_events)
-        activity_bins = {'1 event', @(x) x == 1; '2-3 events', @(x) x >= 2 & x <= 3; 
-                        '4-5 events', @(x) x >= 4 & x <= 5; '6-10 events', @(x) x >= 6 & x <= 10; 
-                        '11+ events', @(x) x >= 11};
+        activity_bins = {'0 events', @(x) x == 0;
+                        '1 event', @(x) x == 1; 
+                        '2-3 events', @(x) x >= 2 & x <= 3; 
+                        '4-5 events', @(x) x >= 4 & x <= 5; 
+                        '6-7 events', @(x) x >= 6 & x <= 7; 
+                        '7-8 events', @(x) x >= 7 & x <= 8; 
+                        '9+ events', @(x) x >= 9};
         
         wt_counts = zeros(1, size(activity_bins, 1));
         mut_counts = zeros(1, size(activity_bins, 1));
@@ -296,12 +300,12 @@ function fig = create_activity_plot_final(wt_data, mut_data, comparison)
         
         bar([wt_counts; mut_counts]', 'grouped');
         xlabel('Activity Category'); ylabel('Active ROI Count');
-        title('Active ROI Categories (No Inactive ROIs)');
+        title('Active ROI Categories (All ROIs)');
         set(gca, 'XTickLabel', activity_bins(:, 1));
         legend('WT', 'R213W', 'Location', 'best'); grid on; xtickangle(45);
     end
     
-    sgtitle('Active ROI Comparison: WT vs R213W (Inactive ROIs Excluded)', 'FontSize', 16, 'FontWeight', 'bold');
+    sgtitle('Active ROI Comparison: WT vs R213W', 'FontSize', 16, 'FontWeight', 'bold');
 end
 
 %% === OTHER REQUIRED FUNCTIONS ===
