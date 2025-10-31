@@ -6,15 +6,15 @@ function config = tracenorm_config()
     
     %% === Baseline Calculation Parameters ===
     config.baseline_method = 'iterative_rolling_median';
-    config.frame_rate = 40;                    % Hz - imaging frequency
-    config.rolling_window_sec = 0.75;          % Rolling window in seconds
+    config.frame_rate = 10;                    % Hz - imaging frequency
+    config.rolling_window_sec = 0.50;          % Rolling window in seconds
     config.rolling_window_frames = round(config.rolling_window_sec * config.frame_rate); % 30 frames
     config.outlier_threshold_sigma = 2.0;      % Standard deviations for outlier detection
     config.max_iterations = 3;                 % Refinement iterations
     
     %% === Data Validation ===
-    config.expected_frames = 1200;             % Expected number of frames
-    config.min_valid_frames = 1000;            % Minimum frames required for baseline calc
+    config.expected_frames = 3000;             % Expected number of frames
+    config.min_valid_frames = 400;            % Minimum frames required for baseline calc
     
     %% === dF/F Calculation ===
     config.dfof_method = 'divide';             % (F - F0) / F0

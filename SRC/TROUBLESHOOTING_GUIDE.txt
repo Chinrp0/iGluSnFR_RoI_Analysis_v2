@@ -1,0 +1,350 @@
+╔══════════════════════════════════════════════════════════════════════════════╗
+║                   TROUBLESHOOTING GUIDE                                      ║
+║            Frame Rate Errors & Figure Duplication Issues                     ║
+╚══════════════════════════════════════════════════════════════════════════════╝
+
+Date: 2025-10-31
+Your Run Output Analysis
+
+═══════════════════════════════════════════════════════════════════════════════
+ISSUE SUMMARY
+═══════════════════════════════════════════════════════════════════════════════
+
+✅ FIXED ISSUES (from previous fixes):
+  • IEI box plot concatenation error → RESOLVED
+  • File count display (1 instead of 10/7) → RESOLVED
+
+❌ NEW ISSUES DISCOVERED:
+  • 5 modules failing with "Unrecognized field name 'frame_rate'"
+  • 26 figures created (expected ~10-12)
+
+═══════════════════════════════════════════════════════════════════════════════
+ISSUE 1: Missing 'frame_rate' Parameter (5 modules affected)
+═══════════════════════════════════════════════════════════════════════════════
+
+MODULES FAILING:
+───────────────
+1. plot_iei_comparison.m                    ← Now fixed, but not being called properly
+2. plot_amplitude_frequency_correlation.m
+3. plot_event_raster.m
+4. plot_cumulative_events.m
+5. plot_condition_roi_traces.m
+
+ERROR MESSAGE:
+─────────────
+"Unrecognized field name 'frame_rate'"
+
+ROOT CAUSE:
+──────────
+These modules expect options.frame_rate to be passed, but integrated_batch_analysis_final()
+is calling them WITHOUT the options parameter:
+
+INCORRECT CALL:
+  plot_iei_comparison(results)          ❌ Missing options!
+
+CORRECT CALL:
+  options.frame_rate = 100;
+  plot_iei_comparison(results, options) ✅ Options passed!
+
+WHERE THE DATA EXISTS:
+─────────────────────
+From your diagnostic output:
+  results.processing_info.frame_rate = 100  ← Data IS there!
+
+But modules are looking for:
+  options.frame_rate  ← Not being passed to them!
+
+SOLUTION #1: Use the Fixed Run Script
+─────────────────────────────────────
+Replace run_pipeline.m with run_pipeline_fixed.m
+
+This version:
+  1. Extracts frame_rate from results.processing_info
+  2. Creates options struct: options.frame_rate = 100
+  3. Passes options to ALL plotting functions
+
+SOLUTION #2: Manually Call the Plots
+────────────────────────────────────
+After running integrated_batch_analysis_final():
+
+  % Extract frame_rate
+  options.frame_rate = results.processing_info.frame_rate;
+  
+  % Call each plot with options
+  plot_iei_comparison(results, options);
+  plot_amplitude_frequency_correlation(results, options);
+  plot_event_raster(results, options);
+  plot_cumulative_events(results, options);
+  plot_condition_roi_traces(results, options);
+
+SOLUTION #3: Use Helper Function
+────────────────────────────────
+  results = integrated_batch_analysis_final(folder_path);
+  create_all_plots_with_frame_rate(results);
+
+This automatically creates all 5 plots with correct parameters.
+
+═══════════════════════════════════════════════════════════════════════════════
+ISSUE 2: 26 Figures Created (Expected 10-12)
+═══════════════════════════════════════════════════════════════════════════════
+
+YOUR OUTPUT:
+───────────
+"After clearing all, clc, and then running run_pipeline.m - I had 26 figure outputs"
+
+EXPECTED FIGURES:
+────────────────
+Core Plots (from integrated_batch_analysis_final):
+  1. Event frequency comparison
+  2. Event amplitude comparison  
+  3. Active ROI comparison
+  4. File summary comparison
+  5. Biological variability analysis  ← Now working!
+  6. ROI recruitment curves
+
+Additional Plots (should be created separately):
+  7. Inter-Event Interval comparison  ← Now working!
+  8. Amplitude-Frequency correlation
+  9. Event timing raster
+  10. Cumulative events over time
+  11. ROI trace comparison
+
+Optional:
+  12. Individual file plots (if generated)
+
+TOTAL EXPECTED: ~10-12 figures
+
+POSSIBLE CAUSES OF 26 FIGURES:
+──────────────────────────────
+1. Duplicate function calls
+   - integrated_batch_analysis_final() creates plots
+   - Then plot_condition_roi_traces() called separately (line 11 in original run_pipeline.m)
+   - This might create duplicates
+
+2. Internal figure creation
+   - Some modules might be creating multiple figures or subplots as separate windows
+
+3. Previous figures not closed
+   - Old figures from previous runs still open
+
+4. Debug/intermediate figures
+   - Some modules might create temporary diagnostic figures
+
+DIAGNOSIS STEPS:
+───────────────
+1. Close all figures and start fresh:
+   >> close all
+   >> clear all
+   >> clc
+
+2. Run the fixed pipeline:
+   >> run_pipeline_fixed
+
+3. Check figure count:
+   >> list_open_figures()
+
+This will show:
+  - How many figures are open
+  - What each figure is named
+  - Whether there are duplicates
+
+EXPECTED OUTPUT from list_open_figures():
+─────────────────────────────────────────
+Total open figures: 11
+
+Grouped by Module:
+  Core frequency comparison        : 1 figure(s)
+  Core amplitude comparison        : 1 figure(s)
+  Core activity comparison         : 1 figure(s)
+  Core file summary               : 1 figure(s)
+  Biological variability          : 1 figure(s)
+  ROI recruitment curves          : 1 figure(s)
+  IEI comparison                  : 1 figure(s)
+  Amplitude-frequency correlation : 1 figure(s)
+  Event timing raster            : 1 figure(s)
+  Cumulative events over time    : 1 figure(s)
+  ROI trace comparison           : 1 figure(s)
+
+IF YOU SEE DUPLICATES:
+─────────────────────
+Check if integrated_batch_analysis_final.m has duplicate plotting code:
+  - Search for: plot_iei_comparison
+  - Search for: plot_amplitude_frequency_correlation
+  - If these appear multiple times, comment out duplicates
+
+═══════════════════════════════════════════════════════════════════════════════
+STEP-BY-STEP FIX PROCEDURE
+═══════════════════════════════════════════════════════════════════════════════
+
+STEP 1: Install New Files
+─────────────────────────
+Copy to your SRC/ folder:
+  ✓ plot_iei_comparison.m (already installed)
+  ✓ plot_biological_variability.m (already installed)
+  ✓ list_open_figures.m (NEW - diagnostic tool)
+  ✓ create_all_plots_with_frame_rate.m (NEW - helper function)
+  ✓ run_pipeline_fixed.m (NEW - corrected pipeline script)
+
+STEP 2: Clean Workspace
+───────────────────────
+>> close all
+>> clear all
+>> clc
+
+STEP 3: Run Fixed Pipeline
+──────────────────────────
+>> run_pipeline_fixed
+
+This will:
+  ✓ Setup pipeline
+  ✓ Process all files
+  ✓ Create core plots
+  ✓ Create additional plots WITH frame_rate parameter
+  ✓ List all open figures
+
+STEP 4: Verify Results
+─────────────────────
+Check console output for:
+  ✓ "Created IEI comparison plot" (no error)
+  ✓ "WT: 10 files, R213W: 7 files" (correct counts)
+  ✓ All 5 additional plots create successfully
+  ✓ Final figure count is reasonable (10-12, not 26)
+
+STEP 5: Investigate If Still 26 Figures
+───────────────────────────────────────
+>> list_open_figures()
+
+This shows:
+  • Which figures are duplicates
+  • Which modules are creating multiple figures
+
+Then investigate those specific modules.
+
+═══════════════════════════════════════════════════════════════════════════════
+QUICK REFERENCE COMMANDS
+═══════════════════════════════════════════════════════════════════════════════
+
+DIAGNOSTIC:
+──────────
+list_open_figures()              % Show all open figures with names
+diagnose_results_structure(results)  % Check data structure
+
+PLOTTING:
+────────
+% Automatic (recommended):
+run_pipeline_fixed               % Runs everything correctly
+
+% Manual:
+results = integrated_batch_analysis_final(folder_path);
+options.frame_rate = results.processing_info.frame_rate;
+plot_iei_comparison(results, options);
+plot_amplitude_frequency_correlation(results, options);
+plot_event_raster(results, options);
+plot_cumulative_events(results, options);
+plot_condition_roi_traces(results, options);
+
+% Helper function:
+create_all_plots_with_frame_rate(results);
+
+CLEANUP:
+───────
+close all                        % Close all figures
+close([1:10])                    % Close figures 1-10
+close(gcf)                       % Close current figure
+
+═══════════════════════════════════════════════════════════════════════════════
+TECHNICAL EXPLANATION: Why This Happened
+═══════════════════════════════════════════════════════════════════════════════
+
+MATLAB FUNCTION PARAMETERS:
+──────────────────────────
+When you define a function:
+  function fig = plot_iei_comparison(results, options)
+
+And call it WITHOUT the second parameter:
+  plot_iei_comparison(results)
+
+MATLAB behavior depends on:
+  1. If 'options' has a default (nargin check), it uses the default
+  2. If code references options.frame_rate directly, it CRASHES with:
+     "Unrecognized field name 'frame_rate'"
+
+YOUR MODULES:
+────────────
+plot_iei_comparison.m has:
+  if nargin < 2
+      options = struct();  ← Creates empty struct
+  end
+  
+  if ~isfield(options, 'frame_rate')
+      options.frame_rate = 100;  ← Sets default!
+  end
+
+So it SHOULD work with:
+  plot_iei_comparison(results)  ← Should default to 100 Hz
+
+BUT OTHER MODULES might not have this check and crash immediately.
+
+THE REAL ISSUE:
+──────────────
+integrated_batch_analysis_final.m is calling these functions incorrectly:
+  try
+      plot_iei_comparison(results)  ← Missing options parameter!
+  catch
+      warning('Failed to create IEI plot')
+  end
+
+Should be:
+  try
+      options.frame_rate = results.processing_info.frame_rate;
+      plot_iei_comparison(results, options)  ← Correct!
+  catch
+      warning('Failed to create IEI plot')
+  end
+
+═══════════════════════════════════════════════════════════════════════════════
+FILES PROVIDED IN THIS PACKAGE
+═══════════════════════════════════════════════════════════════════════════════
+
+1. list_open_figures.m
+   → Diagnostic tool to see all open figures
+   
+2. create_all_plots_with_frame_rate.m
+   → Helper function to create all plots with correct parameters
+   
+3. run_pipeline_fixed.m
+   → Corrected version of run_pipeline.m
+   
+4. TROUBLESHOOTING_GUIDE.txt (this file)
+   → Complete explanation and solutions
+
+═══════════════════════════════════════════════════════════════════════════════
+NEXT STEPS
+═══════════════════════════════════════════════════════════════════════════════
+
+IMMEDIATE:
+─────────
+1. Copy all new files to SRC/
+2. Run: run_pipeline_fixed
+3. Run: list_open_figures()
+4. Report back: How many figures? Any duplicates?
+
+IF STILL ISSUES:
+───────────────
+Share the output from:
+  >> list_open_figures()
+
+This will help identify exactly which modules are creating duplicates.
+
+LONG-TERM FIX:
+─────────────
+Modify integrated_batch_analysis_final.m to properly pass options:
+  1. After processing, extract frame_rate
+  2. Create options struct
+  3. Pass to ALL plotting functions
+  
+Or use the fixed run_pipeline_fixed.m which handles this externally.
+
+═══════════════════════════════════════════════════════════════════════════════
+END OF GUIDE
+═══════════════════════════════════════════════════════════════════════════════
