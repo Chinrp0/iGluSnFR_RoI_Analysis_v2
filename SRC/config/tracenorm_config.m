@@ -22,21 +22,29 @@ function config = tracenorm_config()
     config.outlier_threshold_sigma = 2.0;      % Standard deviations for outlier detection
     config.max_iterations = 3;                 % Refinement iterations
     
+    % NEW: Missing fields required by baseline_detector.m
+    config.verbose = false;                    % Suppress detailed console output
+    config.smooth_baseline = false;            % Don't smooth final baseline (already using rolling median)
+    config.smooth_method = 'movmedian';        % Method if smoothing enabled
+    config.smooth_window = 5;                  % Window size for smoothing (frames)
+    config.transport_slope_threshold = 0.01;   % Threshold for detecting transport ROIs
+    config.min_baseline_frames = 400;          % Minimum frames for valid baseline
+    
     %% === dF/F Calculation ===
-    config.dfof_method = 'standard';           % (F - F0) / F0
+    config.dfof_method = 'divide';           % (F - F0) / F0
     config.min_baseline_value = 0.01;          % Avoid division by zero
     
     %% === CORRECTED Schmitt Trigger Event Detection ===
-    % NEW: Includes outliers in noise calculation (realistic noise estimation)
     config.corrected_schmitt = struct();
     config.corrected_schmitt.upper_threshold_sigma = 3.5;  % Upper threshold (event start)
     config.corrected_schmitt.lower_threshold_sigma = 1.5;  % Lower threshold (event end)
     config.corrected_schmitt.min_event_duration = 3;       % Minimum 3 frames (30ms at 100 Hz)
     config.corrected_schmitt.merge_gap_frames = 2;         % Merge events ≤2 frames apart (20ms)
     config.corrected_schmitt.noise_exclusion_window = 7;   % Exclude sustained events ≥7 frames (70ms)
+    config.corrected_schmitt.sustained_percentile = 85;    % ADD THIS LINE - 85th percentile threshold
     config.corrected_schmitt.includes_outliers_in_noise = true;
     config.corrected_schmitt.excludes_sustained_events = true;
-    
+        
     %% === Legacy Schmitt Trigger (for comparison) ===
     config.event_detection = struct();
     config.event_detection.method = 'schmitt_trigger';
