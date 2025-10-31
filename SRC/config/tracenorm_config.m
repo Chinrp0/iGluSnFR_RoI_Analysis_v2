@@ -1,109 +1,91 @@
 function config = tracenorm_config()
-    % TRACENORM_CONFIG - Updated configuration for corrected Schmitt trigger pipeline
-    % Includes new corrected_schmitt parameters for proper noise estimation
+    % TRACENORM_CONFIG - Configuration for fluorescence trace normalization pipeline
+    % CORRECTED: 3000 frames, 10ms exposure (100 Hz), 30s total recording
+    %
+    % Returns:
+    %   config - struct with all pipeline parameters
     
     config = struct();
     
+    %% === CORRECTED: Imaging Parameters ===
+    % 10ms exposure = 100 Hz frame rate
+    % 3000 frames ÷ 100 Hz = 30 seconds total recording
+    config.frame_rate = 100;                   % Hz - 10ms exposure = 100 fps
+    config.expected_frames = 3000;             % Total frames in recording
+    config.recording_duration_s = config.expected_frames / config.frame_rate; % 30 seconds
+    config.min_valid_frames = 400;             % Minimum frames required for baseline calc
+    
     %% === Baseline Calculation Parameters ===
     config.baseline_method = 'iterative_rolling_median';
-    config.frame_rate = 10;                    % Hz - imaging frequency
-    config.rolling_window_sec = 0.50;          % Rolling window in seconds
-    config.rolling_window_frames = round(config.rolling_window_sec * config.frame_rate); % 30 frames
+    config.rolling_window_sec = 0.50;          % Rolling window in seconds (500ms)
+    config.rolling_window_frames = round(config.rolling_window_sec * config.frame_rate); % 50 frames at 100 Hz
     config.outlier_threshold_sigma = 2.0;      % Standard deviations for outlier detection
     config.max_iterations = 3;                 % Refinement iterations
     
-    %% === Data Validation ===
-    config.expected_frames = 3000;             % Expected number of frames
-    config.min_valid_frames = 400;            % Minimum frames required for baseline calc
-    
     %% === dF/F Calculation ===
-    config.dfof_method = 'divide';             % (F - F0) / F0
-    config.smooth_baseline = false;            % Apply smoothing to final baseline
-    config.smooth_method = 'movmean';          % 'movmean', 'movmedian', 'gaussian'
-    config.smooth_window = 5;                  % Smoothing window size
+    config.dfof_method = 'standard';           % (F - F0) / F0
+    config.min_baseline_value = 0.01;          % Avoid division by zero
     
-    %% === CORRECTED SCHMITT TRIGGER - NEW IMPLEMENTATION ===
+    %% === CORRECTED Schmitt Trigger Event Detection ===
+    % NEW: Includes outliers in noise calculation (realistic noise estimation)
     config.corrected_schmitt = struct();
-    config.corrected_schmitt.upper_threshold_sigma = 3.5;      % Upper threshold (start events)
-    config.corrected_schmitt.lower_threshold_sigma = 1.5;      % Lower threshold (end events)
-    config.corrected_schmitt.noise_exclusion_window = 7;       % Frames to exclude from noise calc
-    config.corrected_schmitt.min_event_duration = 3;           % Minimum event duration
-    config.corrected_schmitt.sustained_percentile = 85;        % Percentile for sustained event detection
-    config.corrected_schmitt.use_outlier_mask = true;          % Use baseline detector's outlier mask
-    config.corrected_schmitt.include_outliers_in_noise = true; % CRITICAL: Include outliers in noise calc
+    config.corrected_schmitt.upper_threshold_sigma = 3.5;  % Upper threshold (event start)
+    config.corrected_schmitt.lower_threshold_sigma = 1.5;  % Lower threshold (event end)
+    config.corrected_schmitt.min_event_duration = 3;       % Minimum 3 frames (30ms at 100 Hz)
+    config.corrected_schmitt.merge_gap_frames = 2;         % Merge events ≤2 frames apart (20ms)
+    config.corrected_schmitt.noise_exclusion_window = 7;   % Exclude sustained events ≥7 frames (70ms)
+    config.corrected_schmitt.includes_outliers_in_noise = true;
+    config.corrected_schmitt.excludes_sustained_events = true;
     
-    %% === LEGACY EVENT DETECTION - Schmitt Trigger Parameters ===
+    %% === Legacy Schmitt Trigger (for comparison) ===
     config.event_detection = struct();
-    config.event_detection.method = 'schmitt_trigger';         % Detection method
-    config.event_detection.upper_threshold_sigma = 3.0;        % Upper threshold (event start)
-    config.event_detection.lower_threshold_sigma = 1.5;        % Lower threshold (event end)
-    config.event_detection.decay_extension_frames = 4;         % Extend events by 3 frames (75ms decay)
-    config.event_detection.rise_extension_frames = 1;          % Extend events before start (conservative)
+    config.event_detection.method = 'schmitt_trigger';
+    config.event_detection.upper_threshold_sigma = 3.0;    % Legacy: lower threshold
+    config.event_detection.lower_threshold_sigma = 1.5;
+    config.event_detection.min_event_duration = 3;         % frames
+    config.event_detection.merge_gap_frames = 2;           % frames
     
-    % Legacy event detection (simple threshold) - for comparison
-    config.simple_event_threshold_sigma = 2.0;  % Simple threshold for comparison
+    %% === Quality Metrics ===
+    config.quality = struct();
+    config.quality.min_baseline_stability = 0.8;     % Minimum stability score
+    config.quality.max_noise_level = 0.2;            % Maximum acceptable noise (dF/F)
+    config.quality.min_snr = 2.0;                    % Minimum signal-to-noise ratio
     
-    %% === QUALITY CRITERIA ===
-    config.quality_criteria = struct();
-    config.quality_criteria.min_snr = 3.0;                     % Minimum signal-to-noise ratio
-    config.quality_criteria.max_baseline_cv = 0.2;             % Maximum baseline CV (20%)
-    config.quality_criteria.min_valid_fraction = 0.8;          % Minimum valid baseline data (80%)
-    config.quality_criteria.min_dynamic_range = 0.01;          % Minimum dF/F range (1%)
-    config.quality_criteria.max_transport_slope = 0.1;         % Transport detection threshold
-    config.quality_criteria.min_dfof_valid = 0.8;              % Minimum valid dF/F data (80%)
-    config.quality_criteria.min_events_for_active = 1;         % Minimum events for "active" ROI
-    config.quality_criteria.max_event_fraction = 0.5;          % Max fraction of frames as events (50%)
+    %% === Temporal Parameters (CORRECTED for 100 Hz) ===
+    config.temporal = struct();
+    config.temporal.frame_rate = config.frame_rate;         % 100 Hz
+    config.temporal.frame_duration_ms = 1000 / config.frame_rate; % 10 ms per frame
+    config.temporal.recording_duration_s = config.recording_duration_s; % 30 seconds
+    config.temporal.max_iei_s = 10;                         % Maximum IEI to analyze (10s)
+    config.temporal.bin_size_ms = 50;                       % For IEI histograms (50ms bins)
     
-    %% === Transport ROI Detection ===
-    config.detect_transport_rois = true;       % Flag ROIs with gradual increase
-    config.transport_slope_threshold = config.quality_criteria.max_transport_slope;
-    config.min_baseline_frames = 100;          % Minimum non-outlier frames for valid baseline
+    %% === Visualization ===
+    config.visualization = struct();
+    config.visualization.plot_baseline = true;
+    config.visualization.plot_events = true;
+    config.visualization.max_traces_to_plot = 100;    % Limit for raster plots
+    config.visualization.colors = struct(...
+        'wt', [0.2, 0.6, 1.0], ...               % Blue for WT
+        'mut', [1.0, 0.4, 0.2]);                 % Red/Orange for mutant
     
-    %% === VISUALIZATION - Fixed for 2x4 layout ===
-    config.plot_sample_traces = true;          % Show sample traces in baseline plots
-    config.num_sample_traces = 8;              % FIXED: Always 8 traces for 2x4 layout
-    config.plot_validation = true;             % Show baseline validation plots
-    config.plot_events = true;                 % Show event detection plots
-    config.plot_layout = struct();             % NEW: Standardized plot layout
-    config.plot_layout.rows = 4;               % FIXED: 4 rows
-    config.plot_layout.cols = 2;               % FIXED: 2 columns
-    config.plot_layout.subplots = 8;           % FIXED: 8 total subplots
+    %% === Output Options ===
+    config.output = struct();
+    config.output.save_figures = false;
+    config.output.figure_format = 'png';
+    config.output.figure_dpi = 300;
+    config.output.save_data = false;
     
-    %% === Peak Marker Settings ===
-    config.peak_markers = struct();            % NEW: Peak marker configuration
-    config.peak_markers.show_above_events = true;      % Show markers above event peaks
-    config.peak_markers.height_offset = 0.02;          % Offset above peak (fraction of range)
-    config.peak_markers.size = 60;                     % Marker size
-    config.peak_markers.color = [0 0.8 0];            % Green color for peak markers
-    config.peak_markers.symbol = '^';                  % Triangle symbol
-    
-    %% === Performance ===
-    config.use_parallel = false;               % Rolling median is already optimized
-    config.memory_efficient = true;            % Use memory-efficient processing
-    
-    %% === Debug Options ===
-    config.verbose = false;                    % Print detailed progress
-    config.save_intermediate = false;          % Save intermediate baseline estimates
-    config.compare_event_methods = false;      % Compare Schmitt vs simple threshold
-    
-    %% === Module Integration Settings ===
-    config.ensure_data_consistency = true;     % NEW: Ensure consistent data passing
-    config.validate_event_mask = true;         % NEW: Validate event_mask in event_stats
-    config.backward_compatibility = true;      % NEW: Maintain old field names for compatibility
-    
-    %% === Error Handling ===
-    config.continue_on_module_error = true;    % Continue pipeline if individual modules fail
-    config.create_fallback_data = true;        % Create empty data structures on failure
-    
-    if config.verbose
-        fprintf('Config loaded: Corrected Schmitt trigger pipeline\n');
-        fprintf('  Corrected Schmitt: %.1f/%.1fσ thresholds (includes outliers in noise)\n', ...
-            config.corrected_schmitt.upper_threshold_sigma, ...
-            config.corrected_schmitt.lower_threshold_sigma);
-        fprintf('  Legacy Schmitt: %.1f/%.1fσ thresholds\n', ...
-            config.event_detection.upper_threshold_sigma, ...
-            config.event_detection.lower_threshold_sigma);
-        fprintf('  Visualization: %dx%d layout (%d subplots)\n', ...
-            config.plot_layout.rows, config.plot_layout.cols, config.plot_layout.subplots);
-    end
+    %% === Summary Display ===
+    fprintf('\n=== Configuration Loaded ===\n');
+    fprintf('Frame Rate: %d Hz (%.1f ms exposure)\n', config.frame_rate, config.temporal.frame_duration_ms);
+    fprintf('Recording: %d frames = %.1f seconds\n', config.expected_frames, config.recording_duration_s);
+    fprintf('Baseline Window: %.0f ms (%d frames)\n', ...
+        config.rolling_window_sec * 1000, config.rolling_window_frames);
+    fprintf('Event Detection: Corrected Schmitt %.1f/%.1fσ\n', ...
+        config.corrected_schmitt.upper_threshold_sigma, ...
+        config.corrected_schmitt.lower_threshold_sigma);
+    fprintf('Min Event Duration: %d frames (%.0f ms)\n', ...
+        config.corrected_schmitt.min_event_duration, ...
+        config.corrected_schmitt.min_event_duration * config.temporal.frame_duration_ms);
+    fprintf('============================\n\n');
 end
