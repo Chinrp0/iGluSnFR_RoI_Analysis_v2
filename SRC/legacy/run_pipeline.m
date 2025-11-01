@@ -5,7 +5,8 @@ setup_pipeline
 folder_path = 'D:\Data\GluSnFR\Ms\2025-10-25_CP_Ms-hipp_Snfr4f-NGR_Doc2b_1mMCa_resave\spont\GPU_SNR_Processed\5_raw_mean';
 
 %% Step 3: Run the integrated batch analysis (WT vs R213W comparison)
-results = integrated_batch_analysis_final(folder_path);
+options.createPlots = true;
+results = integrated_batch_analysis_final(folder_path, options);
 
 %% Step 4: Optional - Create detailed trace comparison plots
 trace_fig = plot_condition_roi_traces(results);
