@@ -78,24 +78,29 @@ end
 %% Step 5: Save all figures
 fprintf('\n=== SAVING FIGURES ===\n');
 
-% Create output directory 1 level above data folder with date and run number
+% Create output directory in same folder as data with date and run number
 [parent_folder, data_folder_name] = fileparts(folder_path);
-[grandparent_folder, ~] = fileparts(parent_folder);
 
-% Get current date string
-date_str = datestr(now, 'yyyymmdd');
+% Get current date string with dashes
+date_str = datestr(now, 'yyyy-mm-dd');
+
+% Extract the core name (remove 'E_' prefix if present)
+core_name = data_folder_name;
+if startsWith(core_name, 'E_')
+    core_name = core_name(3:end);  % Remove 'E_' prefix
+end
 
 % Find existing runs for today
-base_output_name = sprintf('%s_figures_%s', data_folder_name, date_str);
+base_output_name = sprintf('Fig_%s_%s_figures', date_str, core_name);
 run_num = 1;
 
 % Check for existing run directories and increment run number
-while exist(fullfile(grandparent_folder, sprintf('%s_%d', base_output_name, run_num)), 'dir')
+while exist(fullfile(parent_folder, sprintf('%s_%d', base_output_name, run_num)), 'dir')
     run_num = run_num + 1;
 end
 
 % Create final output directory
-output_dir = fullfile(grandparent_folder, sprintf('%s_%d', base_output_name, run_num));
+output_dir = fullfile(parent_folder, sprintf('%s_%d', base_output_name, run_num));
 mkdir(output_dir);
 fprintf('Created output directory: %s\n', output_dir);
 fprintf('Run number: %d\n', run_num);
