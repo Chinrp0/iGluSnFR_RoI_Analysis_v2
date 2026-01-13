@@ -1,0 +1,415 @@
+========================================================================
+NEW VISUALIZATION MODULES FOR GLUSNFR ANALYSIS
+========================================================================
+Created: 2025-10-30
+Updated for: 3000 frames @ 10ms exposure (100 Hz, 30s recording)
+
+This package adds 6 new modular visualization functions to enhance your
+WT vs R213W comparison analysis. Each function can be called independently
+or automatically through the updated integrated_batch_analysis_final.m
+
+========================================================================
+INSTALLATION INSTRUCTIONS
+========================================================================
+
+1. Copy all new .m files to your SRC directory:
+   - plot_iei_comparison.m
+   - plot_amplitude_frequency_correlation.m
+   - plot_event_raster.m
+   - plot_biological_variability.m
+   - plot_roi_recruitment_curves.m
+   - plot_cumulative_events_over_time.m
+
+2. (Optional) Replace integrated_batch_analysis_final.m with the updated
+   version to automatically generate all plots
+
+========================================================================
+QUICK START - AUTOMATIC MODE
+========================================================================
+
+Run all analyses with default settings:
+
+```matlab
+folder_path = 'D:\Data\...\5_raw_mean';
+results = integrated_batch_analysis_final(folder_path);
+```
+
+This will create:
+- 4 core comparison plots (frequency, amplitude, activity, file summary)
+- 6 new extended analysis plots (see below)
+- 1 ROI trace comparison plot
+
+Total: 11 figures automatically generated
+
+========================================================================
+QUICK START - SELECTIVE PLOTTING
+========================================================================
+
+Control which plots are created:
+
+```matlab
+options = struct();
+options.frame_rate = 100;  % 10ms exposure
+options.recording_duration_s = 30;
+
+% Turn off specific plots
+options.create_iei_plot = false;  % Skip IEI analysis
+options.create_event_raster = false;  % Skip raster plot
+
+results = integrated_batch_analysis_final(folder_path, options);
+```
+
+========================================================================
+MODULE 1: INTER-EVENT INTERVAL (IEI) ANALYSIS
+========================================================================
+
+File: plot_iei_comparison.m
+
+PURPOSE:
+Reveals temporal patterning of spontaneous events - are they regular
+(periodic) or random (Poisson-like)?
+
+WHAT IT SHOWS:
+- IEI distribution (log and linear scale)
+- Cumulative IEI distribution
+- Box plot comparison with statistical test
+- Coefficient of variation (CV) - regularity metric
+  * CV = 1: Random (Poisson)
+  * CV < 1: Regular/periodic
+  * CV > 1: Bursting/irregular
+
+USAGE:
+```matlab
+% Standalone
+plot_options = struct('frame_rate', 100, 'max_iei_s', 10);
+fig = plot_iei_comparison(results, plot_options);
+
+% Within integrated analysis (automatic)
+options.create_iei_plot = true;
+results = integrated_batch_analysis_final(folder_path, options);
+```
+
+SCIENTIFIC VALUE:
+- Tests if R213W mutation affects temporal regularity of release
+- CV differences suggest altered stochastic vs regulated release
+- Median IEI gives typical inter-event time
+
+========================================================================
+MODULE 2: AMPLITUDE-FREQUENCY CORRELATION
+========================================================================
+
+File: plot_amplitude_frequency_correlation.m
+
+PURPOSE:
+Tests if high-frequency ROIs have different amplitude characteristics
+
+WHAT IT SHOWS:
+- Scatter plots with marginal histograms (WT and R213W separately)
+- Combined overlay comparison
+- Spearman correlation coefficients
+- Linear trend lines
+
+USAGE:
+```matlab
+% Standalone
+fig = plot_amplitude_frequency_correlation(results);
+
+% Within integrated analysis (automatic)
+options.create_amp_freq_correlation = true;
+results = integrated_batch_analysis_final(folder_path, options);
+```
+
+SCIENTIFIC VALUE:
+- Positive correlation: Larger events occur more frequently
+- Negative correlation: Rare large events, frequent small events
+- No correlation: Independent amplitude and frequency regulation
+- Tests if mutation affects amplitude-frequency coupling
+
+========================================================================
+MODULE 3: EVENT TIMING RASTER PLOTS
+========================================================================
+
+File: plot_event_raster.m
+
+PURPOSE:
+Visual assessment of event timing across population
+
+WHAT IT SHOWS:
+- Raster plot (each row = one ROI, marks = event times)
+- Population event rate over time (events/s)
+- Temporal patterns: bursts, clusters, or uniform distribution
+- Coefficient of variation of population rate
+
+USAGE:
+```matlab
+% Standalone
+plot_options = struct('frame_rate', 100, ...
+                     'max_rois_per_plot', 100, ...
+                     'recording_duration_s', 30);
+fig = plot_event_raster(results, plot_options);
+
+% Within integrated analysis (automatic)
+options.create_event_raster = true;
+results = integrated_batch_analysis_final(folder_path, options);
+```
+
+SCIENTIFIC VALUE:
+- Reveals synchronized vs asynchronous activity
+- Detects network-level events or oscillations
+- Shows if mutation affects temporal coordination
+
+========================================================================
+MODULE 4: BIOLOGICAL VARIABILITY ANALYSIS
+========================================================================
+
+File: plot_biological_variability.m
+
+PURPOSE:
+Shows consistency across biological replicates (coverslips)
+
+WHAT IT SHOWS:
+- Box plots with individual data points overlaid (per file)
+- Metrics: frequency, amplitude, active ROI fraction, total events
+- Coefficient of variation (CV) for each metric
+- Statistical tests between conditions
+
+USAGE:
+```matlab
+% Standalone
+fig = plot_biological_variability(results);
+
+% Within integrated analysis (automatic)
+options.create_biological_variability = true;
+results = integrated_batch_analysis_final(folder_path, options);
+```
+
+SCIENTIFIC VALUE:
+- Assesses experimental reproducibility
+- Identifies outlier experiments
+- Lower CV = more consistent phenotype
+- Critical for publication quality
+
+========================================================================
+MODULE 5: ROI RECRUITMENT CURVES
+========================================================================
+
+File: plot_roi_recruitment_curves.m
+
+PURPOSE:
+More nuanced view of "active ROI fraction" at different thresholds
+
+WHAT IT SHOWS:
+- Recruitment curves: % active ROIs vs frequency threshold
+- Both absolute counts and percentages
+- Difference plot showing where conditions diverge
+- Key threshold comparison table
+
+USAGE:
+```matlab
+% Standalone
+fig = plot_roi_recruitment_curves(results);
+
+% Within integrated analysis (automatic)
+options.create_recruitment_curves = true;
+results = integrated_batch_analysis_final(folder_path, options);
+```
+
+SCIENTIFIC VALUE:
+- Reveals if mutation affects low-frequency or high-frequency ROIs
+- More informative than single "active %" metric
+- Shows full spectrum of activity levels
+
+========================================================================
+MODULE 6: CUMULATIVE EVENT COUNT OVER TIME
+========================================================================
+
+File: plot_cumulative_events_over_time.m
+
+PURPOSE:
+Detects if activity changes during recording (rundown, buildup)
+
+WHAT IT SHOWS:
+- Cumulative event count curves (normalized to 1.0)
+- Instantaneous event rate over time
+- Linearity metrics (R²)
+- Early vs late rate comparison
+
+USAGE:
+```matlab
+% Standalone
+plot_options = struct('frame_rate', 100, 'recording_duration_s', 30);
+fig = plot_cumulative_events_over_time(results, plot_options);
+
+% Within integrated analysis (automatic)
+options.create_cumulative_events = true;
+results = integrated_batch_analysis_final(folder_path, options);
+```
+
+SCIENTIFIC VALUE:
+- Linear curve (R² ≈ 1): Constant activity
+- Upward curvature: Buildup/sensitization
+- Downward curvature: Rundown/desensitization
+- Tests if mutation affects activity stability
+
+========================================================================
+COMPLETE EXAMPLE SCRIPT
+========================================================================
+
+```matlab
+%% Setup
+cd('C:\Users\...\SRC')
+setup_pipeline
+
+%% Define data location
+folder_path = 'D:\Data\GluSnFR\Ms\2025-10-25_CP_Ms-hipp_Snfr4f-NGR_Doc2b_1mMCa_resave\spont\GPU_SNR_Processed\5_raw_mean';
+
+%% Configure options for 10ms exposure data
+options = struct();
+options.frame_rate = 100;  % 10ms exposure = 100 Hz
+options.recording_duration_s = 30;  % 3000 frames / 100 Hz = 30s
+options.verbose = true;
+options.createPlots = true;
+
+% Control which plots to create
+options.create_iei_plot = true;
+options.create_amp_freq_correlation = true;
+options.create_event_raster = true;
+options.create_biological_variability = true;
+options.create_recruitment_curves = true;
+options.create_cumulative_events = true;
+options.create_roi_traces = true;
+
+%% Run complete analysis
+results = integrated_batch_analysis_final(folder_path, options);
+
+%% Access results
+fprintf('WT mean frequency: %.4f Hz\n', results.wt_data.stats.frequency.active_rois.mean);
+fprintf('R213W mean frequency: %.4f Hz\n', results.mut_data.stats.frequency.active_rois.mean);
+fprintf('Frequency p-value: %.6f\n', results.comparison.frequency_pvalue);
+
+%% Access individual plots
+core_plots = results.plot_handles;
+additional_plots = results.additional_plots;
+
+% Example: Get IEI plot handle
+iei_fig = additional_plots.iei_comparison;
+```
+
+========================================================================
+CALLING MODULES INDEPENDENTLY
+========================================================================
+
+You can also call each visualization module independently AFTER running
+the integrated analysis:
+
+```matlab
+% First run the core analysis
+results = integrated_batch_analysis_final(folder_path, ...
+    struct('createPlots', false));  % Skip automatic plotting
+
+% Then call specific modules as needed
+fig1 = plot_iei_comparison(results, struct('frame_rate', 100));
+fig2 = plot_biological_variability(results);
+fig3 = plot_roi_recruitment_curves(results);
+```
+
+This is useful for:
+- Regenerating plots with different options
+- Creating plots after initial analysis
+- Selective figure generation for publications
+
+========================================================================
+TROUBLESHOOTING
+========================================================================
+
+PROBLEM: "Undefined function 'plot_iei_comparison'"
+SOLUTION: Ensure all new .m files are in your MATLAB path. Run setup_pipeline.
+
+PROBLEM: "Expected 1200 frames, got 3000"
+SOLUTION: This is just a warning. The code handles 3000 frames correctly.
+         To suppress, set options.frame_rate = 100 explicitly.
+
+PROBLEM: Plots look empty or have missing data
+SOLUTION: Check that your data actually contains events. Run:
+         fprintf('WT events: %d\n', results.wt_data.total_events);
+         fprintf('R213W events: %d\n', results.mut_data.total_events);
+
+PROBLEM: "Insufficient data for CV analysis"
+SOLUTION: You need ROIs with multiple events (≥2) for inter-event intervals.
+         This is normal if you have many ROIs with only 1 event.
+
+PROBLEM: Out of memory errors
+SOLUTION: Set options.create_event_raster = false; (raster plots use most memory)
+
+========================================================================
+FRAME RATE CRITICAL UPDATE
+========================================================================
+
+Your new data has changed from:
+OLD: 1200 frames @ 25 ms exposure = 40 Hz = 30s recording
+NEW: 3000 frames @ 10 ms exposure = 100 Hz = 30s recording
+
+All new modules default to:
+- frame_rate = 100 Hz
+- recording_duration_s = 30s
+
+If you process old data (1200 frames), explicitly set:
+options.frame_rate = 40;
+
+========================================================================
+OUTPUT SUMMARY
+========================================================================
+
+Running with all options enabled creates:
+
+CORE PLOTS (4):
+1. Event Frequency Comparison (histogram, box plot, CDF)
+2. Event Amplitude Comparison (histogram, box plot, CDF)
+3. Active ROI Comparison (events per ROI, activity categories)
+4. File-Level Summary (per-file metrics)
+
+NEW EXTENDED PLOTS (6):
+5. Inter-Event Interval Analysis (IEI distributions, CV)
+6. Amplitude-Frequency Correlation (scatter with marginals)
+7. Event Timing Raster (population synchrony)
+8. Biological Variability (per-file reproducibility)
+9. ROI Recruitment Curves (threshold-dependent activation)
+10. Cumulative Events Over Time (rundown/buildup detection)
+
+TRACE PLOT (1):
+11. Representative ROI Traces (highest/lowest freq & amp)
+
+TOTAL: 11 figures
+
+========================================================================
+RECOMMENDATIONS FOR PUBLICATION
+========================================================================
+
+MAIN FIGURE:
+- Frequency comparison (histogram + box plot)
+- Amplitude comparison (histogram + box plot)
+- Biological variability (shows reproducibility)
+
+SUPPLEMENTAL FIGURES:
+- ROI recruitment curves (full activity spectrum)
+- IEI analysis (temporal patterning)
+- Representative traces (example data)
+- File-level summary (per-experiment breakdown)
+- Event raster (population dynamics)
+- Cumulative events (stability over time)
+- Amplitude-frequency correlation (mechanistic insight)
+
+========================================================================
+QUESTIONS OR ISSUES?
+========================================================================
+
+All modules follow the same design pattern:
+1. Extract relevant metrics from results structure
+2. Create multi-panel figure with subplots
+3. Add statistical tests where appropriate
+4. Include summary text panels
+5. Return figure handle for further manipulation
+
+Modify any module by editing its respective .m file.
+
+========================================================================

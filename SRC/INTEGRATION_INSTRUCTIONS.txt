@@ -1,0 +1,296 @@
+========================================================================
+INTEGRATION INSTRUCTIONS: ADDING NEW VISUALIZATION MODULES
+========================================================================
+
+This document explains how to integrate the 6 new visualization modules
+into your existing integrated_batch_analysis_final.m file.
+
+========================================================================
+OPTION 1: MANUAL INTEGRATION (RECOMMENDED)
+========================================================================
+
+Add the following code to your existing integrated_batch_analysis_final.m
+AFTER Step 5 (creating core plots) and BEFORE the final results compilation.
+
+INSERT THIS CODE BLOCK:
+-----------------------------------------------------------------------
+
+        %% Step 6: Create ADDITIONAL modular visualizations
+        additional_plots = struct();
+        
+        if options.createPlots && options.verbose
+            fprintf('\nStep 6: Creating additional analysis plots...\n');
+        end
+        
+        % Set up frame rate options for new data format
+        if ~isfield(options, 'frame_rate')
+            options.frame_rate = 100;  % 3000 frames @ 10ms = 100 Hz
+        end
+        if ~isfield(options, 'recording_duration_s')
+            options.recording_duration_s = 30;
+        end
+        
+        % Inter-Event Interval analysis
+        if options.createPlots && getfield_safe(options, 'create_iei_plot', true)
+            try
+                plot_options = struct('frame_rate', options.frame_rate);
+                additional_plots.iei_comparison = plot_iei_comparison(results, plot_options);
+            catch ME
+                fprintf('  WARNING: Failed to create IEI plot: %s\n', ME.message);
+            end
+        end
+        
+        % Amplitude-Frequency correlation
+        if options.createPlots && getfield_safe(options, 'create_amp_freq_correlation', true)
+            try
+                plot_options = struct('frame_rate', options.frame_rate);
+                additional_plots.amp_freq_correlation = plot_amplitude_frequency_correlation(results, plot_options);
+            catch ME
+                fprintf('  WARNING: Failed to create amp-freq correlation plot: %s\n', ME.message);
+            end
+        end
+        
+        % Event timing raster
+        if options.createPlots && getfield_safe(options, 'create_event_raster', true)
+            try
+                plot_options = struct('frame_rate', options.frame_rate, ...
+                    'recording_duration_s', options.recording_duration_s);
+                additional_plots.event_raster = plot_event_raster(results, plot_options);
+            catch ME
+                fprintf('  WARNING: Failed to create event raster plot: %s\n', ME.message);
+            end
+        end
+        
+        % Biological variability
+        if options.createPlots && getfield_safe(options, 'create_biological_variability', true)
+            try
+                additional_plots.biological_variability = plot_biological_variability(results);
+            catch ME
+                fprintf('  WARNING: Failed to create biological variability plot: %s\n', ME.message);
+            end
+        end
+        
+        % ROI recruitment curves
+        if options.createPlots && getfield_safe(options, 'create_recruitment_curves', true)
+            try
+                additional_plots.recruitment_curves = plot_roi_recruitment_curves(results);
+            catch ME
+                fprintf('  WARNING: Failed to create recruitment curves: %s\n', ME.message);
+            end
+        end
+        
+        % Cumulative event count
+        if options.createPlots && getfield_safe(options, 'create_cumulative_events', true)
+            try
+                plot_options = struct('frame_rate', options.frame_rate, ...
+                    'recording_duration_s', options.recording_duration_s);
+                additional_plots.cumulative_events = plot_cumulative_events_over_time(results, plot_options);
+            catch ME
+                fprintf('  WARNING: Failed to create cumulative events plot: %s\n', ME.message);
+            end
+        end
+        
+        % Store additional plots in results
+        results.additional_plots = additional_plots;
+
+-----------------------------------------------------------------------
+
+ADD THIS HELPER FUNCTION AT THE END OF THE FILE:
+-----------------------------------------------------------------------
+
+function value = getfield_safe(s, field, default)
+    % Safely get field with default value
+    if isfield(s, field)
+        value = s.(field);
+    else
+        value = default;
+    end
+end
+
+-----------------------------------------------------------------------
+
+ALSO UPDATE RESULTS STRUCTURE to include frame rate info:
+-----------------------------------------------------------------------
+
+Find the section where results.processing_info is created and add:
+
+results.processing_info.frame_rate = options.frame_rate;
+results.processing_info.recording_duration_s = options.recording_duration_s;
+
+-----------------------------------------------------------------------
+
+========================================================================
+OPTION 2: USE THE PROVIDED TEMPLATE (EASIER)
+========================================================================
+
+Instead of manual integration, I've created a complete template in:
+integrated_batch_analysis_final_UPDATED.m
+
+To use it:
+
+1. BACKUP your current integrated_batch_analysis_final.m:
+   ```matlab
+   copyfile('integrated_batch_analysis_final.m', 'integrated_batch_analysis_final_BACKUP.m');
+   ```
+
+2. REVIEW the template to ensure all your custom modifications are preserved
+
+3. MERGE any custom code you've added to the original file
+
+4. TEST with a small dataset first
+
+========================================================================
+OPTION 3: STANDALONE USAGE (NO INTEGRATION)
+========================================================================
+
+If you don't want to modify integrated_batch_analysis_final.m, you can
+call the new visualization functions after running your analysis:
+
+```matlab
+% Run your existing analysis
+results = integrated_batch_analysis_final(folder_path);
+
+% Then manually create additional plots
+plot_options = struct('frame_rate', 100, 'recording_duration_s', 30);
+
+fig1 = plot_iei_comparison(results, plot_options);
+fig2 = plot_amplitude_frequency_correlation(results, plot_options);
+fig3 = plot_event_raster(results, plot_options);
+fig4 = plot_biological_variability(results);
+fig5 = plot_roi_recruitment_curves(results);
+fig6 = plot_cumulative_events_over_time(results, plot_options);
+```
+
+This approach:
+- Doesn't require modifying existing code
+- Allows selective plot generation
+- Easy to control plot creation order
+- Good for iterative analysis
+
+========================================================================
+TESTING YOUR INTEGRATION
+========================================================================
+
+After integration, test with:
+
+```matlab
+% Test with all plots disabled (should run as before)
+options1 = struct();
+options1.createPlots = false;
+results1 = integrated_batch_analysis_final(folder_path, options1);
+
+% Test with all plots enabled
+options2 = struct();
+options2.frame_rate = 100;
+options2.recording_duration_s = 30;
+results2 = integrated_batch_analysis_final(folder_path, options2);
+
+% Test selective plotting
+options3 = struct();
+options3.frame_rate = 100;
+options3.create_iei_plot = true;
+options3.create_amp_freq_correlation = true;
+options3.create_event_raster = false;  % Skip this one
+options3.create_biological_variability = true;
+options3.create_recruitment_curves = false;  % Skip this one
+options3.create_cumulative_events = true;
+results3 = integrated_batch_analysis_final(folder_path, options3);
+```
+
+========================================================================
+CUSTOMIZATION OPTIONS
+========================================================================
+
+You can add these options to control new plots:
+
+```matlab
+options.create_iei_plot = true/false;  % Inter-event intervals
+options.create_amp_freq_correlation = true/false;  % Amp-freq scatter
+options.create_event_raster = true/false;  % Event timing raster
+options.create_biological_variability = true/false;  % Per-file variability
+options.create_recruitment_curves = true/false;  % ROI recruitment
+options.create_cumulative_events = true/false;  % Cumulative over time
+
+% Frame rate options (IMPORTANT for 10ms exposure data)
+options.frame_rate = 100;  % Hz (3000 frames @ 10ms)
+options.recording_duration_s = 30;  % Total recording time
+
+% Raster plot options
+options.max_rois_per_plot = 100;  % Subsample if more ROIs
+
+% IEI plot options
+options.max_iei_s = 10;  % Maximum IEI to display
+options.bin_size_ms = 50;  % Histogram bin size
+```
+
+========================================================================
+FILE CHECKLIST
+========================================================================
+
+Ensure these files are in your SRC directory:
+
+Core files (you already have):
+☐ integrated_batch_analysis_final.m
+☐ main_pipeline.m
+☐ plot_condition_roi_traces.m
+
+New visualization modules:
+☐ plot_iei_comparison.m
+☐ plot_amplitude_frequency_correlation.m
+☐ plot_event_raster.m
+☐ plot_biological_variability.m
+☐ plot_roi_recruitment_curves.m
+☐ plot_cumulative_events_over_time.m
+
+After copying files, run:
+```matlab
+setup_pipeline  % This adds all files to MATLAB path
+```
+
+========================================================================
+BACKWARD COMPATIBILITY
+========================================================================
+
+All new modules are designed to:
+- Work with your existing results structure
+- Handle missing fields gracefully
+- Provide meaningful error messages if data is insufficient
+- Default to 100 Hz frame rate (new data format)
+
+If you process old data (1200 frames @ 40 Hz), simply set:
+```matlab
+options.frame_rate = 40;
+```
+
+========================================================================
+TROUBLESHOOTING INTEGRATION
+========================================================================
+
+ISSUE: "Undefined function 'plot_iei_comparison'"
+FIX: Run setup_pipeline to add new files to path
+
+ISSUE: Plots are empty or show "Insufficient data"
+FIX: Check that results.file_results exists and contains event_mask data
+
+ISSUE: "Index exceeds array bounds"
+FIX: Ensure frame_rate matches your data (100 Hz for new, 40 Hz for old)
+
+ISSUE: Too many figures opening
+FIX: Set specific create_* options to false to skip unwanted plots
+
+ISSUE: Out of memory
+FIX: Disable event_raster (most memory-intensive):
+     options.create_event_raster = false;
+
+========================================================================
+NEXT STEPS
+========================================================================
+
+1. Copy all 6 new .m files to your SRC directory
+2. Run setup_pipeline
+3. Choose integration method (Manual, Template, or Standalone)
+4. Test with your data
+5. Customize options as needed
+6. Generate publication-quality figures
+
+========================================================================

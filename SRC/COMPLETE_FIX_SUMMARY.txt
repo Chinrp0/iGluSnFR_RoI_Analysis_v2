@@ -1,0 +1,426 @@
+╔══════════════════════════════════════════════════════════════════════════════╗
+║                         COMPLETE FIX PACKAGE                                 ║
+║                   All Issues + Solutions Summary                             ║
+╚══════════════════════════════════════════════════════════════════════════════╝
+
+Date: 2025-10-31
+Status: 2 FIXED, 2 NEW ISSUES DISCOVERED
+
+═══════════════════════════════════════════════════════════════════════════════
+ISSUES FIXED (Previous Session) ✅
+═══════════════════════════════════════════════════════════════════════════════
+
+1. ✅ IEI Box Plot Concatenation Error
+   File: plot_iei_comparison.m (line 95-97)
+   Fix: Changed [a, b] to [a; b] for vertical concatenation
+   Result: Module now runs without errors
+
+2. ✅ File Count Display Error
+   File: plot_biological_variability.m (line 21-22)
+   Fix: Changed length(wt_metrics) to length(wt_metrics.mean_frequency)
+   Result: Correctly shows "WT: 10 files, R213W: 7 files"
+
+═══════════════════════════════════════════════════════════════════════════════
+NEW ISSUES DISCOVERED (Current Session) ❌
+═══════════════════════════════════════════════════════════════════════════════
+
+3. ❌ Missing frame_rate Parameter (5 modules affected)
+   Affected Modules:
+     • plot_iei_comparison.m
+     • plot_amplitude_frequency_correlation.m
+     • plot_event_raster.m
+     • plot_cumulative_events.m
+     • plot_condition_roi_traces.m
+   
+   Error: "Unrecognized field name 'frame_rate'"
+   
+   Root Cause: integrated_batch_analysis_final() calls these without options parameter
+   
+   Solutions Provided:
+     A) run_pipeline_fixed.m - Corrected pipeline script
+     B) create_all_plots_with_frame_rate.m - Helper function
+     C) Manual calling with options struct
+
+4. ❌ Figure Duplication (26 figures instead of 10-12)
+   
+   Possible Causes:
+     • Duplicate function calls
+     • Multiple internal subfigures
+     • Previous figures not closed
+   
+   Diagnostic Tool: list_open_figures.m
+   
+   This will identify which figures are duplicates
+
+═══════════════════════════════════════════════════════════════════════════════
+FILES PROVIDED
+═══════════════════════════════════════════════════════════════════════════════
+
+CORRECTED MODULES (Install to SRC/):
+───────────────────────────────────
+1. plot_iei_comparison.m
+   • Fixed: Vertical concatenation for boxplot
+   • Status: ✅ WORKING (but needs correct parameters)
+
+2. plot_biological_variability.m
+   • Fixed: File count display
+   • Status: ✅ WORKING PERFECTLY
+
+DIAGNOSTIC TOOLS (Install to SRC/):
+──────────────────────────────────
+3. diagnose_results_structure.m
+   • Purpose: Inspect data structure and identify issues
+   • Usage: diagnose_results_structure(results)
+
+4. list_open_figures.m
+   • Purpose: Show all open figures and identify duplicates
+   • Usage: list_open_figures()
+
+PLOTTING HELPERS (Install to SRC/):
+──────────────────────────────────
+5. create_all_plots_with_frame_rate.m
+   • Purpose: Create all plots with correct frame_rate parameter
+   • Usage: create_all_plots_with_frame_rate(results)
+
+IMPROVED PIPELINE (Replace run_pipeline.m):
+──────────────────────────────────────────
+6. run_pipeline_fixed.m
+   • Purpose: Corrected version of run_pipeline.m
+   • Fixes: Properly passes frame_rate to all plotting functions
+   • Usage: run_pipeline_fixed (instead of run_pipeline)
+
+DOCUMENTATION:
+─────────────
+7. FIX_SUMMARY_REPORT.txt
+   • Detailed technical report of original fixes
+
+8. QUICK_FIX_REFERENCE.txt
+   • Visual side-by-side comparison of changes
+
+9. TROUBLESHOOTING_GUIDE.txt
+   • Complete guide for new issues
+
+10. COMPLETE_FIX_SUMMARY.txt (this file)
+    • Overview of all fixes and next steps
+
+═══════════════════════════════════════════════════════════════════════════════
+INSTALLATION INSTRUCTIONS
+═══════════════════════════════════════════════════════════════════════════════
+
+STEP 1: Copy Files to SRC/
+──────────────────────────
+Copy these files to your SRC/ folder:
+  ✓ plot_iei_comparison.m (replace old version)
+  ✓ plot_biological_variability.m (replace old version)
+  ✓ list_open_figures.m (new)
+  ✓ create_all_plots_with_frame_rate.m (new)
+  ✓ run_pipeline_fixed.m (new)
+  ✓ diagnose_results_structure.m (new - optional, for debugging)
+
+STEP 2: Update Your Workflow
+────────────────────────────
+OLD WORKFLOW:
+  run_pipeline  ← Has frame_rate issues
+
+NEW WORKFLOW:
+  run_pipeline_fixed  ← Fixed version
+
+Or keep run_pipeline.m but modify it to add options parameter (see below)
+
+STEP 3: Test the Fix
+────────────────────
+>> close all
+>> clear all
+>> clc
+>> run_pipeline_fixed
+
+Expected Output:
+  ✓ No "Unrecognized field name 'frame_rate'" errors
+  ✓ All modules create successfully
+  ✓ "WT: 10 files, R213W: 7 files" displayed correctly
+  ✓ Reasonable number of figures (10-12, not 26)
+
+STEP 4: Diagnose Figure Count
+─────────────────────────────
+After running pipeline:
+  >> list_open_figures()
+
+This shows:
+  • How many figures are open
+  • Name of each figure
+  • Whether duplicates exist
+
+═══════════════════════════════════════════════════════════════════════════════
+SOLUTION OPTIONS (Choose One)
+═══════════════════════════════════════════════════════════════════════════════
+
+OPTION A: Use Fixed Pipeline Script (RECOMMENDED)
+─────────────────────────────────────────────────
+Advantages:
+  ✓ Drop-in replacement
+  ✓ Handles all parameter passing
+  ✓ Includes diagnostics
+
+Usage:
+  run_pipeline_fixed
+
+OPTION B: Modify Your Existing run_pipeline.m
+─────────────────────────────────────────────
+Add after line 8 (after results = integrated_batch_analysis_final(...)):
+
+  % Extract frame_rate from results
+  options = struct();
+  options.frame_rate = results.processing_info.frame_rate;
+
+Then change line 11 from:
+  trace_fig = plot_condition_roi_traces(results);
+
+To:
+  trace_fig = plot_condition_roi_traces(results, options);
+
+And add calls to other modules:
+  plot_iei_comparison(results, options);
+  plot_amplitude_frequency_correlation(results, options);
+  plot_event_raster(results, options);
+  plot_cumulative_events(results, options);
+
+OPTION C: Use Helper Function
+─────────────────────────────
+After your existing run_pipeline.m finishes:
+  results = integrated_batch_analysis_final(folder_path);
+  create_all_plots_with_frame_rate(results);
+
+This automatically creates all missing plots with correct parameters.
+
+═══════════════════════════════════════════════════════════════════════════════
+EXPECTED RESULTS AFTER FIX
+═══════════════════════════════════════════════════════════════════════════════
+
+CONSOLE OUTPUT:
+──────────────
+=== Complete Integrated Batch Analysis: WT vs R213W ===
+...
+Step 6: Creating additional analysis plots...
+  1. Inter-Event Interval comparison...
+     ✓ Created (Figure X)                    ← No error!
+  2. Amplitude-Frequency correlation...
+     ✓ Created (Figure X)                    ← No error!
+  3. Event Timing raster...
+     ✓ Created (Figure X)                    ← No error!
+  4. Cumulative Events over time...
+     ✓ Created (Figure X)                    ← No error!
+  5. ROI Trace comparison...
+     ✓ Created (Figure X)                    ← No error!
+
+Creating biological variability analysis...
+  WT: 10 files                               ← Correct!
+  R213W: 7 files                             ← Correct!
+  Created biological variability analysis
+
+FIGURE COUNT:
+────────────
+Expected: 10-12 figures total
+
+Core Plots (from integrated_batch_analysis_final):
+  1. Event frequency comparison
+  2. Event amplitude comparison
+  3. Active ROI comparison
+  4. File summary
+  5. Biological variability
+  6. ROI recruitment curves
+
+Additional Plots:
+  7. Inter-Event Interval (IEI)
+  8. Amplitude-Frequency correlation
+  9. Event timing raster
+  10. Cumulative events
+  11. ROI trace comparison
+
+Optional:
+  12. Individual diagnostic figures (if any)
+
+═══════════════════════════════════════════════════════════════════════════════
+VERIFICATION CHECKLIST
+═══════════════════════════════════════════════════════════════════════════════
+
+After running run_pipeline_fixed:
+
+□ No MATLAB errors in console
+□ No "Unrecognized field name" warnings
+□ Console shows "WT: 10 files, R213W: 7 files"
+□ Console shows "✓ Created" for all 5 additional plots
+□ IEI comparison figure has all 6 subplots
+□ Biological variability figure displays correctly
+□ Figure count is reasonable (10-15, not 26)
+□ All figures have proper titles and labels
+
+If ALL boxes checked: ✅ SUCCESS!
+
+If any unchecked:
+  1. Run: list_open_figures()
+  2. Check which module is failing
+  3. Run: diagnose_results_structure(results)
+  4. Report specific error messages
+
+═══════════════════════════════════════════════════════════════════════════════
+FIGURE DUPLICATION INVESTIGATION
+═══════════════════════════════════════════════════════════════════════════════
+
+If you still see 26 figures after using run_pipeline_fixed:
+
+STEP 1: List All Figures
+────────────────────────
+>> list_open_figures()
+
+Output will show:
+  Total open figures: 26
+
+  Grouped by Module:
+    Core frequency comparison    : X figure(s) [fig numbers]
+    Core amplitude comparison    : X figure(s) [fig numbers]
+    ...
+
+STEP 2: Identify Duplicates
+───────────────────────────
+Look for modules with count > 1
+Example:
+  IEI comparison: 3 figure(s) [5, 12, 19]  ← DUPLICATE!
+
+STEP 3: Find Source
+──────────────────
+Search in integrated_batch_analysis_final.m for:
+  plot_iei_comparison
+
+If it appears multiple times, that's the source of duplicates.
+
+STEP 4: Fix Source
+──────────────────
+Comment out duplicate calls:
+  % plot_iei_comparison(results)  ← Comment out duplicate
+
+Or ensure each module is only called once.
+
+═══════════════════════════════════════════════════════════════════════════════
+QUICK COMMANDS REFERENCE
+═══════════════════════════════════════════════════════════════════════════════
+
+RUNNING PIPELINE:
+────────────────
+run_pipeline_fixed               % Fixed version (recommended)
+run_pipeline                     % Original (has issues)
+
+DIAGNOSTICS:
+───────────
+list_open_figures()              % Show all figures
+diagnose_results_structure(results)  % Inspect data structure
+
+PLOTTING:
+────────
+create_all_plots_with_frame_rate(results)  % Create all plots
+
+% Or individually:
+options.frame_rate = results.processing_info.frame_rate;
+plot_iei_comparison(results, options);
+plot_amplitude_frequency_correlation(results, options);
+plot_event_raster(results, options);
+plot_cumulative_events(results, options);
+plot_condition_roi_traces(results, options);
+
+CLEANUP:
+───────
+close all                        % Close all figures
+close([1:15])                    % Close figures 1-15
+close(gcf)                       % Close current figure
+
+═══════════════════════════════════════════════════════════════════════════════
+TROUBLESHOOTING
+═══════════════════════════════════════════════════════════════════════════════
+
+ISSUE: Still getting frame_rate errors
+SOLUTION: Check that you're using run_pipeline_fixed, not run_pipeline
+
+ISSUE: Still seeing 26 figures
+SOLUTION: Run list_open_figures() to identify duplicates, then check
+         integrated_batch_analysis_final.m for duplicate function calls
+
+ISSUE: Figures look wrong
+SOLUTION: Run diagnose_results_structure(results) to verify data integrity
+
+ISSUE: Module not found errors
+SOLUTION: Run setup_pipeline to verify all modules are on MATLAB path
+
+═══════════════════════════════════════════════════════════════════════════════
+NEXT STEPS
+═══════════════════════════════════════════════════════════════════════════════
+
+IMMEDIATE:
+─────────
+1. Install all 6 new/corrected .m files to SRC/
+2. Close all figures: close all
+3. Clear workspace: clear all; clc
+4. Run: run_pipeline_fixed
+5. Verify: list_open_figures()
+
+REPORT BACK:
+───────────
+Share the output from:
+  1. Console output (any errors?)
+  2. list_open_figures() (how many? duplicates?)
+  3. Figure count (still 26 or now 10-12?)
+
+LONG-TERM:
+─────────
+Consider modifying integrated_batch_analysis_final.m directly to:
+  1. Create options struct with frame_rate
+  2. Pass options to all plotting functions
+  3. Remove duplicate plotting calls
+
+This would make run_pipeline.m simpler and more maintainable.
+
+═══════════════════════════════════════════════════════════════════════════════
+SUCCESS METRICS
+═══════════════════════════════════════════════════════════════════════════════
+
+Pipeline Status:
+───────────────
+Target: 11/11 modules working (100% success rate)
+
+✅ Core frequency comparison
+✅ Core amplitude comparison
+✅ Core activity comparison
+✅ Core file summary
+✅ Biological variability (file count fixed)
+✅ ROI recruitment curves
+✅ Inter-Event Interval (concatenation fixed, needs frame_rate)
+⚠️ Amplitude-Frequency correlation (needs frame_rate)
+⚠️ Event timing raster (needs frame_rate)
+⚠️ Cumulative events over time (needs frame_rate)
+⚠️ ROI trace comparison (needs frame_rate)
+
+After Using run_pipeline_fixed:
+All 11 modules should show ✅
+
+═══════════════════════════════════════════════════════════════════════════════
+CONTACT / FEEDBACK
+═══════════════════════════════════════════════════════════════════════════════
+
+If issues persist after following this guide:
+
+1. Share complete console output
+2. Share list_open_figures() output
+3. Share any new error messages
+4. Note which specific step failed
+
+This will help diagnose any remaining issues.
+
+═══════════════════════════════════════════════════════════════════════════════
+END OF SUMMARY
+═══════════════════════════════════════════════════════════════════════════════
+
+Files in this package: 10 files
+  • 2 corrected modules (plot_iei_comparison, plot_biological_variability)
+  • 3 new tools (list_open_figures, create_all_plots, diagnose_results)
+  • 1 fixed pipeline (run_pipeline_fixed)
+  • 4 documentation files (this + 3 guides)
+
+All files ready for installation and use!
