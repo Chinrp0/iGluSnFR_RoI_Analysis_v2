@@ -12,7 +12,7 @@ clc
 setup_pipeline
 
 %% Step 2: Set your data folder path
-folder_path = 'D:\Data\GluSnFR\Ms\2025-10-25_CP_Ms-hipp_Snfr4f-NGR_Doc2b_1mMCa_resave\spont\GPU_SNR_Processed\5_raw_mean';
+folder_path = 'E:\Data\GluSnFR\Ms\2025-06-17_Ms-Hipp_DIV13_Doc2b_pilot_resave\iglusnfr4f_NGR\Spont\Spont_2025-12-29--1\E_raw_mean';
 
 %% Step 3: Run the integrated batch analysis (creates core plots)
 fprintf('\n=== RUNNING MAIN ANALYSIS ===\n');

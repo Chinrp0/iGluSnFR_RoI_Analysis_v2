@@ -10,8 +10,8 @@ function config = tracenorm_config()
     %% === CORRECTED: Imaging Parameters ===
     % 10ms exposure = 100 Hz frame rate
     % 3000 frames ÷ 100 Hz = 30 seconds total recording
-    config.frame_rate = 100;                   % Hz - 10ms exposure = 100 fps
-    config.expected_frames = 3000;             % Total frames in recording
+    config.frame_rate = 40;                   % Hz - 10ms exposure = 100 fps
+    config.expected_frames = 1200;             % Total frames in recording
     config.recording_duration_s = config.expected_frames / config.frame_rate; % 30 seconds
     config.min_valid_frames = 400;             % Minimum frames required for baseline calc
     
