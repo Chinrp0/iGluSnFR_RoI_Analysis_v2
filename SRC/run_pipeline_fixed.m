@@ -78,16 +78,27 @@ end
 %% Step 5: Save all figures
 fprintf('\n=== SAVING FIGURES ===\n');
 
-% Create output directory based on data folder
+% Create output directory 1 level above data folder with date and run number
 [parent_folder, data_folder_name] = fileparts(folder_path);
-output_dir = fullfile(parent_folder, [data_folder_name, '_figures']);
+[grandparent_folder, ~] = fileparts(parent_folder);
 
-if ~exist(output_dir, 'dir')
-    mkdir(output_dir);
-    fprintf('Created output directory: %s\n', output_dir);
-else
-    fprintf('Using existing output directory: %s\n', output_dir);
+% Get current date string
+date_str = datestr(now, 'yyyymmdd');
+
+% Find existing runs for today
+base_output_name = sprintf('%s_figures_%s', data_folder_name, date_str);
+run_num = 1;
+
+% Check for existing run directories and increment run number
+while exist(fullfile(grandparent_folder, sprintf('%s_%d', base_output_name, run_num)), 'dir')
+    run_num = run_num + 1;
 end
+
+% Create final output directory
+output_dir = fullfile(grandparent_folder, sprintf('%s_%d', base_output_name, run_num));
+mkdir(output_dir);
+fprintf('Created output directory: %s\n', output_dir);
+fprintf('Run number: %d\n', run_num);
 
 % Get all open figures
 all_figures = findall(0, 'Type', 'figure');
@@ -117,22 +128,25 @@ for i = 1:length(all_figures)
     fig_name = strrep(fig_name, '\', '_');
     fig_name = regexprep(fig_name, '[^\w\-]', '');
 
+    % Add figure number prefix
+    fig_name_with_number = sprintf('%d_%s', fig.Number, fig_name);
+
     % Save as both PNG (for viewing) and FIG (for editing)
-    png_path = fullfile(output_dir, [fig_name, '.png']);
-    fig_path = fullfile(output_dir, [fig_name, '.fig']);
+    png_path = fullfile(output_dir, [fig_name_with_number, '.png']);
+    fig_path = fullfile(output_dir, [fig_name_with_number, '.fig']);
 
     try
         % Save as PNG (high resolution)
         saveas(fig, png_path);
-        fprintf('  ✓ Saved: %s.png\n', fig_name);
+        fprintf('  ✓ Saved: %s.png\n', fig_name_with_number);
 
         % Save as FIG (MATLAB figure file)
         saveas(fig, fig_path);
-        fprintf('  ✓ Saved: %s.fig\n', fig_name);
+        fprintf('  ✓ Saved: %s.fig\n', fig_name_with_number);
 
         saved_count = saved_count + 1;
     catch ME
-        fprintf('  ✗ Failed to save %s: %s\n', fig_name, ME.message);
+        fprintf('  ✗ Failed to save %s: %s\n', fig_name_with_number, ME.message);
     end
 end
 
