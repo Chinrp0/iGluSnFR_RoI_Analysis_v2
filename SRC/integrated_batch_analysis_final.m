@@ -610,7 +610,7 @@ function fig = create_file_summary_final(wt_data, mut_data, comparison)
 end
 
 function [wt_files, mut_files, all_files] = classify_files_by_condition_integrated(folder_path)
-    csv_files = dir(fullfile(folder_path, '*.csv'));
+    csv_files = list_data_files(folder_path);   % .csv / .xlsx / .xls
     all_files = {}; wt_files = {}; mut_files = {};
     
     for i = 1:length(csv_files)

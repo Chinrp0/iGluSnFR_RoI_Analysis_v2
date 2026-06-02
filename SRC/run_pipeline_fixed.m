@@ -1,169 +1,130 @@
 %% ========================================================================
-%% IMPROVED RUN_PIPELINE - Fixed frame_rate issues
+%% RUN_PIPELINE_FIXED - WT vs R213W spontaneous activity analysis
 %% ========================================================================
-% This version properly passes frame_rate to all plotting modules
-% Run this instead of the original run_pipeline.m
+% Single entry point for the analysis.
+%
+% integrated_batch_analysis_final() already creates ALL plots (the 4 core
+% comparison plots in its Step 5 + the 7 additional plots in its Step 6).
+% This script therefore does NOT recreate any plots. Recreating them in a
+% separate Step 4 was the cause of the duplicate-figure problem
+% (~26 figures instead of ~12).
+%
+% Acquisition parameters (frame_rate, recording_duration_s) are read from
+% tracenorm_config() so there is ONE source of truth shared by the event
+% detectors (inside main_pipeline) and the temporal plot modules (IEI,
+% raster, cumulative). If those two ever disagree, frequencies and timing
+% axes silently land on different clocks.
+%
+% To change acquisition rate, edit tracenorm_config.m only.
+%% ========================================================================
 
-%% Step 1: Clean workspace and setup
-clear all
-close all  % Close any existing figures
-clc
+clear; close all; clc;
 
 setup_pipeline
 
-%% Step 2: Set your data folder path
-folder_path = 'E:\Data\GluSnFR\Ms\2025-06-17_Ms-Hipp_DIV13_Doc2b_pilot_resave\iglusnfr4f_NGR\Spont\Spont_2025-12-29--1\E_raw_mean';
+%% --- Data folder ------------------------------------------------------
+% EDIT THIS to point at your CSV folder:
+folder_path = 'E:\Data\GluSnFR\Ms\2025-06-17_Ms-Hipp_DIV13_Doc2b_pilot_resave\iglu3fast_NGR\1AP\GPU_Processed_Images_1AP\5_raw_mean';
 
-%% Step 3: Run the integrated batch analysis (creates core plots)
-fprintf('\n=== RUNNING MAIN ANALYSIS ===\n');
-results = integrated_batch_analysis_final(folder_path);
 
-fprintf('\n=== Main analysis complete ===\n');
-fprintf('Initial figure count: %d\n', length(findall(0, 'Type', 'figure')));
+%% --- Single source of truth for acquisition parameters ---------------
+% Analysis mode ('Spont' or '1AP') is set in tracenorm_config.m via
+% config.dataType. That one switch selects the whole analysis path below.
+cfg = tracenorm_config();
 
-%% Step 4: Create additional plots WITH proper frame_rate parameter
-fprintf('\n=== CREATING ADDITIONAL PLOTS ===\n');
-
-% Set up options with frame_rate
 options = struct();
-if isfield(results, 'processing_info') && isfield(results.processing_info, 'frame_rate')
-    options.frame_rate = results.processing_info.frame_rate;
+options.frame_rate           = cfg.frame_rate;             % Hz
+options.recording_duration_s = cfg.recording_duration_s;   % seconds
+options.verbose              = true;
+options.createPlots          = true;
+
+fprintf('\nMode: %s | Acquisition (from tracenorm_config): %d Hz, %.1f s (%d frames expected)\n', ...
+    cfg.dataType, cfg.frame_rate, cfg.recording_duration_s, cfg.expected_frames);
+
+%% --- Run analysis ----------------------------------------------------
+fprintf('\n=== RUNNING ANALYSIS ===\n');
+if strcmpi(cfg.dataType, '1AP')
+    results = oneap_batch_analysis(folder_path, options);
 else
-    options.frame_rate = 100;  % Default
+    % Spontaneous: creates core + all 7 additional plots
+    results = integrated_batch_analysis_final(folder_path, options);
 end
 
-% Create plots that failed due to missing frame_rate
-fprintf('Creating plots with frame_rate = %d Hz...\n', options.frame_rate);
+fprintf('\n=== Analysis complete ===\n');
+fprintf('Open figures: %d\n', numel(findall(0, 'Type', 'figure')));
 
-try
-    fprintf('  1. Inter-Event Interval comparison...\n');
-    fig_iei = plot_iei_comparison(results, options);
-    fprintf('     ✓ Created (Figure %d)\n', fig_iei.Number);
-catch ME
-    fprintf('     ✗ Failed: %s\n', ME.message);
-end
+%% --- Save all open figures -------------------------------------------
+output_dir = make_output_dir(folder_path);
+save_all_figures(output_dir);
 
-try
-    fprintf('  2. Amplitude-Frequency correlation...\n');
-    fig_ampfreq = plot_amplitude_frequency_correlation(results, options);
-    fprintf('     ✓ Created (Figure %d)\n', fig_ampfreq.Number);
-catch ME
-    fprintf('     ✗ Failed: %s\n', ME.message);
-end
-
-try
-    fprintf('  3. Event Timing raster...\n');
-    fig_raster = plot_event_raster(results, options);
-    fprintf('     ✓ Created (Figure %d)\n', fig_raster.Number);
-catch ME
-    fprintf('     ✗ Failed: %s\n', ME.message);
-end
-
-try
-    fprintf('  4. Cumulative Events over time...\n');
-    fig_cumulative = plot_cumulative_events(results, options);
-    fprintf('     ✓ Created (Figure %d)\n', fig_cumulative.Number);
-catch ME
-    fprintf('     ✗ Failed: %s\n', ME.message);
-end
-
-try
-    fprintf('  5. ROI Trace comparison...\n');
-    fig_traces = plot_condition_roi_traces(results, options);
-    fprintf('     ✓ Created (Figure %d)\n', fig_traces.Number);
-catch ME
-    fprintf('     ✗ Failed: %s\n', ME.message);
-end
-
-%% Step 5: Save all figures
-fprintf('\n=== SAVING FIGURES ===\n');
-
-% Create output directory in same folder as data with date and run number
-[parent_folder, data_folder_name] = fileparts(folder_path);
-
-% Get current date string with dashes
-date_str = datestr(now, 'yyyy-mm-dd');
-
-% Extract the core name (remove 'E_' prefix if present)
-core_name = data_folder_name;
-if startsWith(core_name, 'E_')
-    core_name = core_name(3:end);  % Remove 'E_' prefix
-end
-
-% Find existing runs for today
-base_output_name = sprintf('Fig_%s_%s_figures', date_str, core_name);
-run_num = 1;
-
-% Check for existing run directories and increment run number
-while exist(fullfile(parent_folder, sprintf('%s_%d', base_output_name, run_num)), 'dir')
-    run_num = run_num + 1;
-end
-
-% Create final output directory
-output_dir = fullfile(parent_folder, sprintf('%s_%d', base_output_name, run_num));
-mkdir(output_dir);
-fprintf('Created output directory: %s\n', output_dir);
-fprintf('Run number: %d\n', run_num);
-
-% Get all open figures
-all_figures = findall(0, 'Type', 'figure');
-fprintf('Found %d figures to save\n', length(all_figures));
-
-% Save each figure
-saved_count = 0;
-for i = 1:length(all_figures)
-    fig = all_figures(i);
-
-    % Get figure name (use figure title or default name)
-    if ~isempty(fig.Name)
-        fig_name = fig.Name;
-    elseif ~isempty(fig.Children) && isprop(fig.Children(1), 'Title')
-        fig_name = get(fig.Children(1).Title, 'String');
-        if iscell(fig_name)
-            fig_name = fig_name{1};
-        end
-    else
-        fig_name = sprintf('Figure_%d', fig.Number);
-    end
-
-    % Clean filename (remove special characters)
-    fig_name = strrep(fig_name, ' ', '_');
-    fig_name = strrep(fig_name, ':', '-');
-    fig_name = strrep(fig_name, '/', '_');
-    fig_name = strrep(fig_name, '\', '_');
-    fig_name = regexprep(fig_name, '[^\w\-]', '');
-
-    % Add figure number prefix
-    fig_name_with_number = sprintf('%d_%s', fig.Number, fig_name);
-
-    % Save as both PNG (for viewing) and FIG (for editing)
-    png_path = fullfile(output_dir, [fig_name_with_number, '.png']);
-    fig_path = fullfile(output_dir, [fig_name_with_number, '.fig']);
-
+%% --- 1AP: export per-ROI metrics table -------------------------------
+if strcmpi(cfg.dataType, '1AP') && isfield(results, 'oneap_metrics_table')
+    metrics_csv = fullfile(output_dir, 'oneap_per_roi_metrics.csv');
     try
-        % Save as PNG (high resolution)
-        saveas(fig, png_path);
-        fprintf('  ✓ Saved: %s.png\n', fig_name_with_number);
-
-        % Save as FIG (MATLAB figure file)
-        saveas(fig, fig_path);
-        fprintf('  ✓ Saved: %s.fig\n', fig_name_with_number);
-
-        saved_count = saved_count + 1;
+        writetable(results.oneap_metrics_table, metrics_csv);
+        fprintf('Saved per-ROI 1AP metrics to:\n  %s\n', metrics_csv);
     catch ME
-        fprintf('  ✗ Failed to save %s: %s\n', fig_name_with_number, ME.message);
+        fprintf('Could not write metrics table: %s\n', ME.message);
     end
 end
 
-fprintf('\nSuccessfully saved %d/%d figures to:\n  %s\n', saved_count, length(all_figures), output_dir);
-
-%% Step 6: Summary
+%% --- Report ----------------------------------------------------------
 fprintf('\n=== PIPELINE COMPLETE ===\n');
-fprintf('Final figure count: %d\n', length(findall(0, 'Type', 'figure')));
-fprintf('Figures saved to: %s\n', output_dir);
-fprintf('\nTo see a list of all figures: list_open_figures()\n');
+list_open_figures();
+fprintf('Figures saved to:\n  %s\n', output_dir);
 fprintf('To close all figures: close all\n\n');
 
-%% Optional: List all open figures
-fprintf('Listing all open figures:\n');
-list_open_figures();
+
+%% ========================================================================
+%% Local helper functions
+%% ========================================================================
+function output_dir = make_output_dir(folder_path)
+    % Create a dated, auto-incremented output directory one level above the
+    % data folder.
+    [parent, data_name] = fileparts(folder_path);
+    [grandparent, ~]     = fileparts(parent);
+
+    date_str = datestr(now, 'yyyymmdd');
+    base     = sprintf('%s_figures_%s', data_name, date_str);
+
+    run_num = 1;
+    while exist(fullfile(grandparent, sprintf('%s_%d', base, run_num)), 'dir')
+        run_num = run_num + 1;
+    end
+
+    output_dir = fullfile(grandparent, sprintf('%s_%d', base, run_num));
+    mkdir(output_dir);
+    fprintf('Created output directory (run %d):\n  %s\n', run_num, output_dir);
+end
+
+function save_all_figures(output_dir)
+    % Save every open figure as both PNG (viewing) and FIG (editing).
+    figs = findall(0, 'Type', 'figure');
+    fprintf('Saving %d figures...\n', numel(figs));
+
+    saved = 0;
+    for i = 1:numel(figs)
+        fig = figs(i);
+
+        if ~isempty(fig.Name)
+            name = fig.Name;
+        else
+            name = sprintf('Figure_%d', fig.Number);
+        end
+
+        % Clean filename
+        name = strrep(name, ' ', '_');
+        name = regexprep(name, '[^\w\-]', '');
+        stem = sprintf('%d_%s', fig.Number, name);
+
+        try
+            saveas(fig, fullfile(output_dir, [stem '.png']));
+            saveas(fig, fullfile(output_dir, [stem '.fig']));
+            saved = saved + 1;
+        catch ME
+            fprintf('  Could not save %s: %s\n', stem, ME.message);
+        end
+    end
+
+    fprintf('Saved %d/%d figures.\n', saved, numel(figs));
+end

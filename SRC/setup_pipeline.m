@@ -25,7 +25,12 @@ function setup_pipeline()
         'corrected_schmitt_detector', 'tracenorm/corrected_schmitt_detector.m';  % NEW: Corrected detector
         'pure_schmitt_trigger_detector', 'tracenorm/pure_schmitt_trigger_detector.m';  % Legacy
         'quality_assessor', 'tracenorm/quality_assessor.m';
-        'baseline_plotter', 'visualization/baseline_plotter.m'
+        'baseline_plotter', 'visualization/baseline_plotter_clean.m';
+        'prestim_baseline', 'tracenorm/prestim_baseline.m';            % 1AP: pre-stim baseline
+        'schmitt_trigger_core', 'tracenorm/schmitt_trigger_core.m';    % shared Schmitt core
+        'oneap_analyzer', 'tracenorm/oneap_analyzer.m';                % 1AP: per-ROI metrics
+        'oneap_pipeline', 'oneap_pipeline.m';                          % 1AP: single-file path
+        'oneap_batch_analysis', 'oneap_batch_analysis.m'              % 1AP: batch driver
     };
     
     allModulesFound = true;
@@ -116,7 +121,7 @@ function setup_pipeline()
         fprintf('    │   ├── pure_schmitt_trigger_detector.m  ← Legacy for comparison\n');
         fprintf('    │   └── quality_assessor.m\n');
         fprintf('    ├── visualization/\n');
-        fprintf('    │   └── baseline_plotter.m\n');
+        fprintf('    │   └── baseline_plotter_clean.m\n');
         fprintf('    ├── tests/\n');
         fprintf('    │   └── compare_schmitt_implementations.m  ← NEW: Compare methods\n');
         fprintf('    └── io/\n');

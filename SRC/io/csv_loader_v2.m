@@ -40,12 +40,12 @@ function [allData, allMetadata] = loadBatch(folder, options)
     if ~isfield(options, 'useParallel'), options.useParallel = true; end
     if ~isfield(options, 'maxWorkers'), options.maxWorkers = []; end
     
-    % Get CSV files
-    csvFiles = dir(fullfile(folder, '*.csv'));
+    % Get data files (.csv / .xlsx / .xls)
+    csvFiles = list_data_files(folder);
     numFiles = length(csvFiles);
-    
+
     if numFiles == 0
-        error('No CSV files found in folder: %s', folder);
+        error('No CSV/XLSX files found in folder: %s', folder);
     end
     
     fprintf('Loading %d CSV files...\n', numFiles);

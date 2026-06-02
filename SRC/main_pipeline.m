@@ -16,7 +16,7 @@ function results = main_pipeline(folder, options)
     if ~isfield(options, 'useCorrectedSchmitt'), options.useCorrectedSchmitt = true; end  % NEW: Use corrected version by default
     
     % Determine processing mode
-    if isfile(folder) && endsWith(folder, '.csv')
+    if isfile(folder) && endsWith(folder, {'.csv', '.xlsx', '.xls'}, 'IgnoreCase', true)
         processingMode = 'single_file';
         if options.verbose
             fprintf('=== Single File Analysis Mode ===\n');
