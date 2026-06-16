@@ -29,6 +29,7 @@ function setup_pipeline()
         'prestim_baseline', 'tracenorm/prestim_baseline.m';            % 1AP: pre-stim baseline
         'schmitt_trigger_core', 'tracenorm/schmitt_trigger_core.m';    % shared Schmitt core
         'oneap_analyzer', 'tracenorm/oneap_analyzer.m';                % 1AP: per-ROI metrics
+        'fit_decay_double', 'tracenorm/fit_decay_double.m';            % 1AP: averaged double-exp decay
         'oneap_pipeline', 'oneap_pipeline.m';                          % 1AP: single-file path
         'oneap_batch_analysis', 'oneap_batch_analysis.m'              % 1AP: batch driver
     };

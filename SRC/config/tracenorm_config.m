@@ -30,19 +30,33 @@ function config = tracenorm_config()
     % they are properties of the specific recording, not the frame rate.
     config.oneAP = struct();
     config.oneAP.expected_frames   = 600;      % Total frames per 1AP trace (this dataset)
-    config.oneAP.stim_frame        = 267;      % Frame of stimulus onset (PROGRAMMABLE, this dataset)
-    config.oneAP.peak_search_ms    = [0, 30];  % Window after stim to find evoked peak
-    config.oneAP.sync_window_ms    = [0, 20];  % Synchronous release window
-    config.oneAP.async_window_ms   = [20, 250];% Asynchronous release window
-    config.oneAP.bin_size_ms       = 10;       % Temporal histogram bin
+    config.oneAP.stim_frame        = 266;      % Frame of stimulus onset (PROGRAMMABLE, this dataset)
+    config.oneAP.sync_window_ms    = [0, 15];  % Synchronous release window (timing label only)
+    config.oneAP.async_window_ms   = [15, 250];% Asynchronous release window (timing label only)
+                                               % NOTE: the evoked iGlu peak lands ~15-35 ms post-stim
+                                               % (median 25 ms, data-measured), so the responder call
+                                               % and amplitude use the LARGEST peak, not the sync window.
+    config.oneAP.bin_size_ms       = 5;       % Temporal histogram bin
     config.oneAP.auc_window_ms     = [0, 250]; % Window for area-under-curve (baseline-subtracted)
-    config.oneAP.tau_end_ms        = 200;      % Decay fit runs from peak to this time post-stim
+    % Decay kinetics have NO fixed fit-window parameter:
+    %   - averaged-responder fit (DOUBLE exponential) runs from the peak to the
+    %     end of the trace, so the slow component is fully captured
+    %   - per-ROI fit (mono) runs from the peak until the trace returns below the
+    %     lower threshold, i.e. it spans that ROI's own decay
+    config.oneAP.tau_peak_window_ms = 50;      % Decay-onset peak searched in [0, this] post-stim
+    config.oneAP.tau_min_r2        = 0.5;      % Min fit R^2 to keep a decay tau
     config.oneAP.baseline_guard_ms = 0;        % Time before stim to drop from baseline (settling)
-    % Schmitt quality control thresholds for 1AP (sigma of pre-stim noise)
-    config.oneAP.upper_threshold_sigma = 3.5;  % Event start / responder threshold
-    config.oneAP.lower_threshold_sigma = 1.5;  % Event end threshold
-    config.oneAP.min_event_duration_ms = 20;   % Time above lower threshold to validate an event
-    config.oneAP.merge_gap_ms          = 20;   % Merge events separated by <= this gap
+    % Multi-peak detection thresholds for 1AP (sigma of pre-stim noise)
+    config.oneAP.upper_threshold_sigma = 3.0;  % Event / responder threshold (peak height)
+    config.oneAP.lower_threshold_sigma = 1.5;  % Lower threshold (reported for reference)
+    config.oneAP.min_peak_distance_ms  = 10;   % Min spacing between detected peaks (findpeaks)
+    % Option B responder cleaning (data-driven, this dataset):
+    config.oneAP.min_frames_above_upper = 2;   % Peak must stay >= upper threshold for >= this many
+                                               % frames. Rejects single-frame noise spikes; the real
+                                               % discriminator (sustained ABOVE the upper threshold,
+                                               % not the lower one). Set to 1 for old height-only behavior.
+    config.oneAP.max_noise_sd          = 0.02; % Drop ROIs whose pre-stim dF/F robust SD exceeds this
+                                               % (too noisy to score). median sigma ~0.006, p90 ~0.009.
 
     %% === Mode-dependent frame counts ===
     if strcmpi(config.dataType, '1AP')
