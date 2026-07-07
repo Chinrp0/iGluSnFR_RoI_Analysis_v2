@@ -124,12 +124,14 @@ function stats = calculate_baseline_stats(data, baseline, outlier_mask, config)
     max_signal = max(data, [], 1);
     signal_to_baseline = max_signal ./ baseline_mean;
     
-    % Transport detection (linear trend in baseline)
-    time_vector = (1:numFrames)';
+    % Transport detection (linear trend in baseline). Fit against time in
+    % SECONDS so the slope is in F units/second and the threshold is frame-rate
+    % independent (the same physical drift gives the same slope at any exposure).
+    time_vector = (1:numFrames)' / config.frame_rate;   % seconds
     transport_slopes = zeros(1, numROIs);
     for roi = 1:numROIs
         p = polyfit(time_vector, baseline(:, roi), 1);
-        transport_slopes(roi) = p(1);  % Slope of linear fit
+        transport_slopes(roi) = p(1);  % Slope of linear fit (F per second)
     end
     
     % Identify potential transport ROIs

@@ -56,22 +56,21 @@ function [event_mask, event_stats] = corrected_schmitt_detector(dfof_data, confi
     
     %% === Apply Corrected Schmitt Trigger to Each ROI ===
     event_mask = false(numFrames, numROIs);
-    debug_roi = 613;  % For detailed debugging
-    
+
     for roi = 1:numROIs
         roi_trace = dfof_data(:, roi);
         roi_upper = upper_threshold(roi);
         roi_lower = lower_threshold(roi);
-        
+
         % Skip invalid ROIs
         if all(isnan(roi_trace)) || roi_upper <= 0 || isnan(roi_upper)
             continue;
         end
-        
+
         % Apply corrected Schmitt trigger with validation
         roi_events = corrected_schmitt_with_validation(roi_trace, roi_upper, roi_lower, ...
-            min_event_duration, roi == debug_roi && config.verbose);
-        
+            min_event_duration, false);
+
         event_mask(:, roi) = roi_events;
     end
     

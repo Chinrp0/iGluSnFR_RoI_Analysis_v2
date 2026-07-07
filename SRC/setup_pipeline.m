@@ -27,11 +27,20 @@ function setup_pipeline()
         'quality_assessor', 'tracenorm/quality_assessor.m';
         'baseline_plotter', 'visualization/baseline_plotter_clean.m';
         'prestim_baseline', 'tracenorm/prestim_baseline.m';            % 1AP: pre-stim baseline
-        'schmitt_trigger_core', 'tracenorm/schmitt_trigger_core.m';    % shared Schmitt core
         'oneap_analyzer', 'tracenorm/oneap_analyzer.m';                % 1AP: per-ROI metrics
         'fit_decay_double', 'tracenorm/fit_decay_double.m';            % 1AP: averaged double-exp decay
         'oneap_pipeline', 'oneap_pipeline.m';                          % 1AP: single-file path
-        'oneap_batch_analysis', 'oneap_batch_analysis.m'              % 1AP: batch driver
+        'oneap_batch_analysis', 'oneap_batch_analysis.m';             % 1AP: batch driver
+        'twoap_analyzer', 'tracenorm/twoap_analyzer.m';                % 2AP: per-ROI PPR metrics
+        'twoap_pipeline', 'twoap_pipeline.m';                          % 2AP: single-file path
+        'twoap_batch_analysis', 'twoap_batch_analysis.m';             % 2AP: batch driver (PPR vs ISI)
+        'parse_group', 'io/parse_group.m';                             % shared: config-driven group parse
+        'parse_coverslip_id', 'io/parse_coverslip_id.m';               % shared: coverslip id
+        'parse_isi_ms', 'io/parse_isi_ms.m';                           % shared: PPF ISI from filename
+        'draw_box', 'visualization/draw_box.m';                        % shared: native box/whisker
+        'make_time_axis', 'visualization/make_time_axis.m';            % shared: figure x-axis unit
+        'format_time_axis', 'visualization/format_time_axis.m';        % shared: x-axis label + range
+        'montage_window', 'visualization/montage_window.m'             % shared: montage frame window
     };
     
     allModulesFound = true;

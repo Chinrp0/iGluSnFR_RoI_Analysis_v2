@@ -22,15 +22,12 @@ clear; close all; clc;
 
 setup_pipeline
 
-%% --- Data folder ------------------------------------------------------
-% EDIT THIS to point at your CSV folder:
-folder_path = 'E:\Data\GluSnFR\Ms\2025-06-17_Ms-Hipp_DIV13_Doc2b_pilot_resave\iglu3fast_NGR\1AP\GPU_Processed_Images_1AP\5_raw_mean';
-
-
-%% --- Single source of truth for acquisition parameters ---------------
-% Analysis mode ('Spont' or '1AP') is set in tracenorm_config.m via
-% config.dataType. That one switch selects the whole analysis path below.
+%% --- Single source of truth: mode, exposure, groups AND data folder --
+% Analysis mode ('1AP', '2AP' or 'Spont'), exposure and the data folder are all
+% set in tracenorm_config.m (config.dataType, config.exposure_ms,
+% config.folder_path). That one file selects the whole analysis path below.
 cfg = tracenorm_config();
+folder_path = cfg.folder_path;
 
 options = struct();
 options.frame_rate           = cfg.frame_rate;             % Hz
@@ -45,6 +42,9 @@ fprintf('\nMode: %s | Acquisition (from tracenorm_config): %d Hz, %.1f s (%d fra
 fprintf('\n=== RUNNING ANALYSIS ===\n');
 if strcmpi(cfg.dataType, '1AP')
     results = oneap_batch_analysis(folder_path, options);
+elseif strcmpi(cfg.dataType, '2AP')
+    % Paired-pulse (PPF): PPR vs ISI (per coverslip) + method-comparison montage
+    results = twoap_batch_analysis(folder_path, options);
 else
     % Spontaneous: creates core + all 7 additional plots
     results = integrated_batch_analysis_final(folder_path, options);
@@ -57,12 +57,20 @@ fprintf('Open figures: %d\n', numel(findall(0, 'Type', 'figure')));
 output_dir = make_output_dir(folder_path);
 save_all_figures(output_dir);
 
-%% --- 1AP: export per-ROI metrics table -------------------------------
+%% --- Export per-ROI metrics table -------------------------------------
 if strcmpi(cfg.dataType, '1AP') && isfield(results, 'oneap_metrics_table')
     metrics_csv = fullfile(output_dir, 'oneap_per_roi_metrics.csv');
     try
         writetable(results.oneap_metrics_table, metrics_csv);
         fprintf('Saved per-ROI 1AP metrics to:\n  %s\n', metrics_csv);
+    catch ME
+        fprintf('Could not write metrics table: %s\n', ME.message);
+    end
+elseif strcmpi(cfg.dataType, '2AP') && isfield(results, 'twoap_metrics_table')
+    metrics_csv = fullfile(output_dir, 'twoap_per_roi_metrics.csv');
+    try
+        writetable(results.twoap_metrics_table, metrics_csv);
+        fprintf('Saved per-ROI 2AP metrics to:\n  %s\n', metrics_csv);
     catch ME
         fprintf('Could not write metrics table: %s\n', ME.message);
     end

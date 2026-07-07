@@ -45,8 +45,11 @@ function [dfof_data, basic_stats] = dfof_calculator(raw_data, baseline, config)
     end
     
     %% === Handle Invalid Baselines ===
-    % Set very small or negative baselines to NaN
-    invalid_baseline = baseline <= 0 | baseline < (0.01 * mean(baseline, 'all', 'omitnan'));
+    % Invalidate non-physical baselines PER ROI: <= 0, or < 1% of that ROI's own
+    % mean baseline. The test is per-column (implicit expansion) so a dim but
+    % valid ROI is not judged against brighter ROIs' brightness.
+    roi_mean_baseline = mean(baseline, 1, 'omitnan');            % [1 x ROIs]
+    invalid_baseline  = baseline <= 0 | baseline < (0.01 * roi_mean_baseline);
     dfof_data(invalid_baseline) = NaN;
     
     %% === Calculate Basic Statistics Only ===

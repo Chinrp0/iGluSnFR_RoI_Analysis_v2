@@ -117,9 +117,7 @@ function [dataCell, metadataArray] = loadDataFiles(folder, options, processingMo
         loader = csv_loader_v2();
         
         loadOptions = struct();
-        loadOptions.useParallel = options.useParallel && strcmp(processingMode, 'batch');
         loadOptions.dataType = 'single';
-        loadOptions.expectedFrames = 1200;
         
         if strcmp(processingMode, 'single_file')
             [singleData, singleMetadata] = loader.loadSingleFile(folder, loadOptions);
