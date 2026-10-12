@@ -18,14 +18,14 @@ function setup_pipeline()
     
     modules = {
         'csv_loader_v2', 'io/csv_loader_v2.m';
-        'main_pipeline', 'main_pipeline.m';
+        'spont_pipeline', 'spont_pipeline.m';
         'tracenorm_config', 'config/tracenorm_config.m';
         'baseline_detector', 'tracenorm/baseline_detector.m';
         'dfof_calculator', 'tracenorm/dfof_calculator.m';
         'corrected_schmitt_detector', 'tracenorm/corrected_schmitt_detector.m';  % NEW: Corrected detector
         'pure_schmitt_trigger_detector', 'tracenorm/pure_schmitt_trigger_detector.m';  % Legacy
         'quality_assessor', 'tracenorm/quality_assessor.m';
-        'baseline_plotter', 'visualization/baseline_plotter_clean.m';
+        'baseline_plotter_clean', 'visualization/baseline_plotter_clean.m';
         'prestim_baseline', 'tracenorm/prestim_baseline.m';            % 1AP: pre-stim baseline
         'oneap_analyzer', 'tracenorm/oneap_analyzer.m';                % 1AP: per-ROI metrics
         'fit_decay_double', 'tracenorm/fit_decay_double.m';            % 1AP: averaged double-exp decay
@@ -34,6 +34,11 @@ function setup_pipeline()
         'twoap_analyzer', 'tracenorm/twoap_analyzer.m';                % 2AP: per-ROI PPR metrics
         'twoap_pipeline', 'twoap_pipeline.m';                          % 2AP: single-file path
         'twoap_batch_analysis', 'twoap_batch_analysis.m';             % 2AP: batch driver (PPR vs ISI)
+        'load_dataset_folder', 'io/load_dataset_folder.m';             % loader: data + Recordings.csv
+        'read_recordings_metadata', 'io/read_recordings_metadata.m';   % loader: metadata parser
+        'select_data_folder', 'io/select_data_folder.m';               % loader: folder dialog
+        'apply_recording_timing', 'config/apply_recording_timing.m';   % metadata timing -> config
+        'parse_drug', 'io/parse_drug.m';                               % shared: drug from filename
         'parse_group', 'io/parse_group.m';                             % shared: config-driven group parse
         'parse_coverslip_id', 'io/parse_coverslip_id.m';               % shared: coverslip id
         'parse_isi_ms', 'io/parse_isi_ms.m';                           % shared: PPF ISI from filename
@@ -80,7 +85,7 @@ function setup_pipeline()
                 config.corrected_schmitt.min_event_duration);
             
             % Test main pipeline function (without running it)
-            if exist('main_pipeline', 'file')
+            if exist('spont_pipeline', 'file')
                 fprintf('  ✓ Main pipeline accessible\n');
             end
             
@@ -101,8 +106,8 @@ function setup_pipeline()
             
             fprintf('\n=== Setup Complete ===\n');
             fprintf('Ready to run:\n');
-            fprintf('  results = main_pipeline(folder_path);  %% Uses corrected Schmitt by default\n');
-            fprintf('  results = main_pipeline(folder_path, struct(''useCorrectedSchmitt'', false));  %% Uses legacy\n');
+            fprintf('  load_dataset    %% optional: pick + load a folder once\n');
+            fprintf('  run_pipeline    %% mode (1AP / 2AP / Spont) from tracenorm_config.dataType\n');
             fprintf('\nNew Features:\n');
             fprintf('  • Corrected Schmitt trigger (includes outliers in noise calculation)\n');
             fprintf('  • Proper sustained event exclusion (≥7 frames)\n');
@@ -121,7 +126,7 @@ function setup_pipeline()
         fprintf('Please check that you are in the SRC directory and all modules exist.\n');
         fprintf('Expected folder structure:\n');
         fprintf('  SRC/\n');
-        fprintf('    ├── main_pipeline.m\n');
+        fprintf('    ├── spont_pipeline.m\n');
         fprintf('    ├── config/\n');
         fprintf('    │   └── tracenorm_config.m\n');
         fprintf('    ├── tracenorm/\n');

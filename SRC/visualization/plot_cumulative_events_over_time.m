@@ -1,9 +1,10 @@
 function fig = plot_cumulative_events_over_time(results, options)
+    [lblA, lblB, colA, colB] = spont_group_labels(results);   % group labels/colours
     % PLOT_CUMULATIVE_EVENTS_OVER_TIME - Shows cumulative event counts over recording
     % Detects if there's rundown, buildup, or constant activity
     %
     % Args:
-    %   results - Output from integrated_batch_analysis_final()
+    %   results - Output from spont_batch_analysis()
     %   options - Optional struct with:
     %             .frame_rate (default: 100 Hz)
     %             .recording_duration_s (default: 30s)
@@ -24,28 +25,28 @@ function fig = plot_cumulative_events_over_time(results, options)
     [mut_cum_mean, mut_cum_files, mut_stats] = extract_cumulative_data(...
         results.file_results.mut_results, options.frame_rate);
     
-    fprintf('  WT: %d files\n', wt_stats.n_files);
-    fprintf('  R213W: %d files\n', mut_stats.n_files);
+    fprintf(['  ' lblA ': %d files\n'], wt_stats.n_files);
+    fprintf(['  ' lblB ': %d files\n'], mut_stats.n_files);
     
     %% Create figure
-    fig = figure('Name', 'Cumulative Event Count: WT vs R213W', ...
+    fig = figure('Name', ['Cumulative Event Count: ' lblA ' vs ' lblB], ...
         'Position', [100, 100, 1400, 900]);
     
     %% Subplot 1: WT Cumulative Curves
     subplot(2, 3, 1);
-    plot_cumulative_curves(wt_cum_files, wt_cum_mean, 'WT', [0.2, 0.6, 1.0], options);
+    plot_cumulative_curves(wt_cum_files, wt_cum_mean, lblA, colA, options);
     
     %% Subplot 2: R213W Cumulative Curves
     subplot(2, 3, 2);
-    plot_cumulative_curves(mut_cum_files, mut_cum_mean, 'R213W', [1.0, 0.4, 0.2], options);
+    plot_cumulative_curves(mut_cum_files, mut_cum_mean, lblB, colB, options);
     
     %% Subplot 3: Mean Comparison
     subplot(2, 3, 3);
     plot(wt_cum_mean.time, wt_cum_mean.cumulative_normalized, 'b-', 'LineWidth', 3, ...
-        'DisplayName', 'WT Mean');
+        'DisplayName', [lblA ' Mean']);
     hold on;
     plot(mut_cum_mean.time, mut_cum_mean.cumulative_normalized, 'r-', 'LineWidth', 3, ...
-        'DisplayName', 'R213W Mean');
+        'DisplayName', [lblB ' Mean']);
     
     xlabel('Time (s)');
     ylabel('Normalized Cumulative Events');
@@ -61,11 +62,11 @@ function fig = plot_cumulative_events_over_time(results, options)
     
     %% Subplot 4: Instantaneous Rate (WT)
     subplot(2, 3, 4);
-    plot_instantaneous_rate(wt_cum_mean, 'WT', [0.2, 0.6, 1.0], options);
+    plot_instantaneous_rate(wt_cum_mean, lblA, colA, options);
     
     %% Subplot 5: Instantaneous Rate (R213W)
     subplot(2, 3, 5);
-    plot_instantaneous_rate(mut_cum_mean, 'R213W', [1.0, 0.4, 0.2], options);
+    plot_instantaneous_rate(mut_cum_mean, lblB, colB, options);
     
     %% Subplot 6: Summary Statistics
     subplot(2, 3, 6); axis off;
@@ -77,13 +78,13 @@ function fig = plot_cumulative_events_over_time(results, options)
     summary_text = {
         'CUMULATIVE EVENT ANALYSIS';
         '';
-        'WT:';
+        [lblA ':'];
         sprintf('  Linearity: %.4f', wt_linearity.r_squared);
         sprintf('  Early rate: %.1f events/s', wt_stats.early_rate);
         sprintf('  Late rate: %.1f events/s', wt_stats.late_rate);
         sprintf('  Rate change: %+.1f%%', wt_stats.rate_change_percent);
         '';
-        'R213W:';
+        [lblB ':'];
         sprintf('  Linearity: %.4f', mut_linearity.r_squared);
         sprintf('  Early rate: %.1f events/s', mut_stats.early_rate);
         sprintf('  Late rate: %.1f events/s', mut_stats.late_rate);
@@ -98,7 +99,7 @@ function fig = plot_cumulative_events_over_time(results, options)
     text(0.05, 0.95, summary_text, 'FontSize', 10, 'VerticalAlignment', 'top', ...
         'HorizontalAlignment', 'left', 'Units', 'normalized', 'FontName', 'FixedWidth');
     
-    sgtitle('Cumulative Event Count Over Time: WT vs R213W', 'FontSize', 16, 'FontWeight', 'bold');
+    sgtitle(['Cumulative Event Count Over Time: ' lblA ' vs ' lblB], 'FontSize', 16, 'FontWeight', 'bold');
     
     fprintf('  Created cumulative event count analysis\n');
 end

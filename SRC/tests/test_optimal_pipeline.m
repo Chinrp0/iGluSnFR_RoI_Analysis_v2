@@ -19,7 +19,7 @@ test_options.savePlots = false;
 %% === Test 1: Current Pipeline ===
 fprintf('\n1. Testing CURRENT pipeline...\n');
 tic;
-results_current = main_pipeline(test_file, test_options);
+results_current = spont_pipeline(test_file, test_options);
 time_current = toc;
 
 fprintf('   Current pipeline: %.3f seconds\n', time_current);
@@ -54,7 +54,7 @@ tic;
 [event_mask_optimal, event_stats_optimal] = optimal_schmitt_event_detector(dfof_data, config, baseline_stats);
 
 % Use fixed plotting with optimal results
-plot_handles_optimal = baseline_plotter(data, baseline, dfof_data, outlier_mask, ...
+plot_handles_optimal = baseline_plotter_clean(data, baseline, dfof_data, outlier_mask, ...
     baseline_stats, dfof_stats, metadata, config, event_stats_optimal);
 
 time_optimal = toc;
@@ -152,7 +152,7 @@ end
 fprintf('\n=== INTEGRATION INSTRUCTIONS ===\n');
 fprintf('To integrate optimal detection into your main pipeline:\n\n');
 
-fprintf('1. REPLACE the schmitt_event_detector call in main_pipeline.m:\n');
+fprintf('1. REPLACE the schmitt_event_detector call in spont_pipeline.m:\n');
 fprintf('   OLD: [event_mask, event_stats] = schmitt_event_detector(dfof_data, config);\n');
 fprintf('   NEW: [event_mask, event_stats] = optimal_schmitt_event_detector(dfof_data, config, baseline_stats);\n\n');
 

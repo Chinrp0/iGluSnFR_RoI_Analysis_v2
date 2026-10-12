@@ -3,7 +3,7 @@ function saved = save_open_figures(output_dir, figs)
     %
     % Filenames are "<number>_<Name>" with the figure Name sanitised to word
     % characters and hyphens (falls back to "Figure_<n>" when Name is empty).
-    % Shared by run_pipeline_fixed and the batch analyzers.
+    % Shared by run_pipeline and the batch analyzers.
     %
     % Inputs:
     %   output_dir - destination directory (must exist)

@@ -16,7 +16,7 @@ expected_files = {
     'tracenorm/dfof_calculator.m',
     'visualization/baseline_plotter.m',
     'io/csv_loader_v2.m',
-    'main_pipeline.m'
+    'spont_pipeline.m'
 };
 
 fprintf('\nChecking required files:\n');
@@ -86,7 +86,7 @@ else
     fprintf('\n❌ SETUP INCOMPLETE - Missing required files\n');
     fprintf('\nExpected directory structure:\n');
     fprintf('  SRC/\n');
-    fprintf('    ├── main_pipeline.m\n');
+    fprintf('    ├── spont_pipeline.m\n');
     fprintf('    ├── config/\n');
     fprintf('    │   └── tracenorm_config.m\n');
     fprintf('    ├── tracenorm/\n');

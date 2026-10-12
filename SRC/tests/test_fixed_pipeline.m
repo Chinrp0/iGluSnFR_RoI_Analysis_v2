@@ -61,7 +61,7 @@ fprintf('    ✓ Quality assessed: %d active ROIs (%.1f%%)\n', ...
 %% === Test Fixed Plotting (2x4 layout with peak markers) ===
 fprintf('\n2. Testing fixed plotting with 2x4 layout...\n');
 try
-    plot_handles = baseline_plotter(data, baseline, dfof_data, outlier_mask, ...
+    plot_handles = baseline_plotter_clean(data, baseline, dfof_data, outlier_mask, ...
         baseline_stats, dfof_stats, metadata, config, event_stats);
     
     fprintf('    ✓ Plotting successful: %d figures created\n', length(fieldnames(plot_handles)));
@@ -77,10 +77,10 @@ catch ME
 end
 
 %% === Test Full Pipeline ===
-fprintf('\n3. Testing complete main_pipeline...\n');
+fprintf('\n3. Testing complete spont_pipeline...\n');
 try
     tic;
-    results = main_pipeline(test_file, test_options);
+    results = spont_pipeline(test_file, test_options);
     pipeline_time = toc;
     
     fprintf('    ✓ Full pipeline completed in %.3f s\n', pipeline_time);

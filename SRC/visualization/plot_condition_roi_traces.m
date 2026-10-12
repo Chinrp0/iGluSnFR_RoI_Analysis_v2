@@ -1,4 +1,5 @@
 function fig = plot_condition_roi_traces(results, options)
+    [lblA, lblB, colA, colB] = spont_group_labels(results);   % group labels/colours
     % PLOT_CONDITION_ROI_TRACES - Creates 2x4 subplot figure comparing WT vs R213W traces
     % 
     % Layout:
@@ -8,7 +9,7 @@ function fig = plot_condition_roi_traces(results, options)
     % Row 4: Lowest amplitude ROI     (WT | R213W)
     %
     % Args:
-    %   results - Output from integrated_batch_analysis_final()
+    %   results - Output from spont_batch_analysis()
     %   options - Optional struct with plotting preferences
     
     if nargin < 2
@@ -21,13 +22,13 @@ function fig = plot_condition_roi_traces(results, options)
     if ~isfield(options, 'trace_color'), options.trace_color = [0, 0, 0]; end  % Black
     if ~isfield(options, 'show_thresholds'), options.show_thresholds = true; end
     
-    fprintf('Creating WT vs R213W ROI comparison traces...\n');
+    fprintf(['Creating ' lblA ' vs ' lblB ' ROI comparison traces...\n']);
     
     %% === Extract and Find Target ROIs ===
     [target_rois, trace_data] = find_target_rois_and_data(results, options);
     
     %% === Create Figure ===
-    fig = figure('Name', 'WT vs R213W ROI Comparison Traces', ...
+    fig = figure('Name', [lblA ' vs ' lblB ' ROI Comparison Traces'], ...
         'Position', [100, 100, 1400, 1200]);
     
     % 4 rows x 2 columns layout
@@ -35,7 +36,7 @@ function fig = plot_condition_roi_traces(results, options)
     cols = 2;
     
     row_labels = {'Highest Frequency', 'Lowest Frequency', 'Highest Amplitude', 'Lowest Amplitude'};
-    col_labels = {'WT', 'R213W'};
+    col_labels = {lblA, lblB};
     
     %% === Plot Each Comparison ===
     for row = 1:rows
@@ -61,13 +62,14 @@ function fig = plot_condition_roi_traces(results, options)
     end
     
     % Add overall title
-    sgtitle('WT vs R213W: Representative ROI Traces with Events', ...
+    sgtitle([lblA ' vs ' lblB ': Representative ROI Traces with Events'], ...
         'FontSize', 16, 'FontWeight', 'bold');
     
     fprintf('  Created 2x4 trace comparison figure\n');
 end
 
 function [target_rois, trace_data] = find_target_rois_and_data(results, options)
+    [lblA, lblB, colA, colB] = spont_group_labels(results);   % group labels/colours
     % Find the target ROIs and extract their trace data
     
     fprintf('  Selecting target ROIs...\n');
@@ -97,10 +99,10 @@ function [target_rois, trace_data] = find_target_rois_and_data(results, options)
     trace_data.mut = extract_trace_data_for_targets(target_rois.mut, mut_valid);
     
     % Print selection summary
-    fprintf('    WT targets: freq[%d,%d], amp[%d,%d]\n', ...
+    fprintf(['    ' lblA ' targets: freq[%d,%d], amp[%d,%d]\n'], ...
         target_rois.wt.highest_freq.global_roi, target_rois.wt.lowest_freq.global_roi, ...
         target_rois.wt.highest_amp.global_roi, target_rois.wt.lowest_amp.global_roi);
-    fprintf('    R213W targets: freq[%d,%d], amp[%d,%d]\n', ...
+    fprintf(['    ' lblB ' targets: freq[%d,%d], amp[%d,%d]\n'], ...
         target_rois.mut.highest_freq.global_roi, target_rois.mut.lowest_freq.global_roi, ...
         target_rois.mut.highest_amp.global_roi, target_rois.mut.lowest_amp.global_roi);
 end

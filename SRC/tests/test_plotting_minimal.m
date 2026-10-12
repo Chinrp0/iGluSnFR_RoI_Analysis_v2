@@ -160,8 +160,8 @@ end
 %% Test 5: Try calling actual baseline_plotter
 fprintf('  Testing actual baseline_plotter function...\n');
 try
-    plot_handles = baseline_plotter(data, baseline, dfof_data, outlier_mask, ...
-        baseline_stats, metadata, config);
+    plot_handles = baseline_plotter_clean(data, baseline, dfof_data, outlier_mask, ...
+        baseline_stats, dfof_stats, metadata, config);
     fprintf('  ✓ baseline_plotter completed successfully!\n');
     fprintf('    Created %d plots\n', length(fieldnames(plot_handles)));
     

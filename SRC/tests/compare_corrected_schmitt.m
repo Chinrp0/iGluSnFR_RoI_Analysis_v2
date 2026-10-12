@@ -18,7 +18,7 @@ function setup_pipeline()
     
     modules = {
         'csv_loader_v2', 'io/csv_loader_v2.m';
-        'main_pipeline', 'main_pipeline.m';
+        'spont_pipeline', 'spont_pipeline.m';
         'tracenorm_config', 'config/tracenorm_config.m';
         'baseline_detector', 'tracenorm/baseline_detector.m';
         'dfof_calculator', 'tracenorm/dfof_calculator.m';
@@ -65,7 +65,7 @@ function setup_pipeline()
                 config.corrected_schmitt.min_event_duration);
             
             % Test main pipeline function (without running it)
-            if exist('main_pipeline', 'file')
+            if exist('spont_pipeline', 'file')
                 fprintf('  ✓ Main pipeline accessible\n');
             end
             
@@ -86,8 +86,8 @@ function setup_pipeline()
             
             fprintf('\n=== Setup Complete ===\n');
             fprintf('Ready to run:\n');
-            fprintf('  results = main_pipeline(folder_path);  %% Uses corrected Schmitt by default\n');
-            fprintf('  results = main_pipeline(folder_path, struct(''useCorrectedSchmitt'', false));  %% Uses legacy\n');
+            fprintf('  results = spont_pipeline(folder_path);  %% Uses corrected Schmitt by default\n');
+            fprintf('  results = spont_pipeline(folder_path, struct(''useCorrectedSchmitt'', false));  %% Uses legacy\n');
             fprintf('\nNew Features:\n');
             fprintf('  • Corrected Schmitt trigger (includes outliers in noise calculation)\n');
             fprintf('  • Proper sustained event exclusion (≥7 frames)\n');
@@ -106,7 +106,7 @@ function setup_pipeline()
         fprintf('Please check that you are in the SRC directory and all modules exist.\n');
         fprintf('Expected folder structure:\n');
         fprintf('  SRC/\n');
-        fprintf('    ├── main_pipeline.m\n');
+        fprintf('    ├── spont_pipeline.m\n');
         fprintf('    ├── config/\n');
         fprintf('    │   └── tracenorm_config.m\n');
         fprintf('    ├── tracenorm/\n');

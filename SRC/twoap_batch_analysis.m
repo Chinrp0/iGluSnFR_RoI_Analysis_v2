@@ -20,7 +20,7 @@ function results = twoap_batch_analysis(folder_path, options)
     if ~isfield(options, 'verbose'),      options.verbose = true; end
     if ~isfield(options, 'createPlots'),  options.createPlots = true; end
     if ~isfield(options, 'createMontage'),options.createMontage = true; end
-    % saveFigures defaults OFF: run_pipeline_fixed saves all open figures after
+    % saveFigures defaults OFF: run_pipeline saves all open figures after
     % this returns, so leave it off there to avoid double-saving. Set true when
     % calling twoap_batch_analysis directly to get a dated figures folder.
     if ~isfield(options, 'saveFigures'),  options.saveFigures = false; end

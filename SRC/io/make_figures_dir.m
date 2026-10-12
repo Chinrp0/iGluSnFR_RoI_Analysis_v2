@@ -3,7 +3,7 @@ function output_dir = make_figures_dir(folder_path)
     %
     % Creates "<data_name>_figures_<yyyymmdd>_<run>" one level ABOVE the data
     % folder, incrementing <run> so repeated runs on the same day never collide.
-    % Shared by run_pipeline_fixed and the batch analyzers so every entry point
+    % Shared by run_pipeline and the batch analyzers so every entry point
     % uses the same output-folder convention.
     %
     % Input:  folder_path - the data folder that was analysed

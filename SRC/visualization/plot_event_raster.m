@@ -1,9 +1,10 @@
 function fig = plot_event_raster(results, options)
+    [lblA, lblB, colA, colB] = spont_group_labels(results);   % group labels/colours
     % PLOT_EVENT_RASTER - Event timing raster plots
     % Shows temporal distribution of events across ROIs
     %
     % Args:
-    %   results - Output from integrated_batch_analysis_final()
+    %   results - Output from spont_batch_analysis()
     %   options - Optional struct with:
     %             .frame_rate (default: 100 Hz)
     %             .max_rois_per_plot (default: 100, subsample if more)
@@ -26,30 +27,30 @@ function fig = plot_event_raster(results, options)
     [mut_raster, mut_stats] = extract_raster_data(results.file_results.mut_results, ...
         options.frame_rate, options.max_rois_per_plot);
     
-    fprintf('  WT: %d active ROIs (showing %d)\n', wt_stats.total_active_rois, wt_stats.displayed_rois);
-    fprintf('  R213W: %d active ROIs (showing %d)\n', mut_stats.total_active_rois, mut_stats.displayed_rois);
+    fprintf(['  ' lblA ': %d active ROIs (showing %d)\n'], wt_stats.total_active_rois, wt_stats.displayed_rois);
+    fprintf(['  ' lblB ': %d active ROIs (showing %d)\n'], mut_stats.total_active_rois, mut_stats.displayed_rois);
     
     %% Create figure
-    fig = figure('Name', 'Event Timing Raster: WT vs R213W', ...
+    fig = figure('Name', ['Event Timing Raster: ' lblA ' vs ' lblB], ...
         'Position', [100, 100, 1400, 1000]);
     
     %% Subplot 1: WT Raster
     subplot(3, 2, [1, 3]);
-    plot_raster_subplot(wt_raster, 'WT', [0.2, 0.6, 1.0], options.recording_duration_s);
+    plot_raster_subplot(wt_raster, lblA, colA, options.recording_duration_s);
     
     %% Subplot 2: R213W Raster
     subplot(3, 2, [2, 4]);
-    plot_raster_subplot(mut_raster, 'R213W', [1.0, 0.4, 0.2], options.recording_duration_s);
+    plot_raster_subplot(mut_raster, lblB, colB, options.recording_duration_s);
     
     %% Subplot 3: Population event rate over time (WT)
     subplot(3, 2, 5);
-    plot_population_rate(wt_raster, wt_stats, 'WT', [0.2, 0.6, 1.0], options);
+    plot_population_rate(wt_raster, wt_stats, lblA, colA, options);
     
     %% Subplot 4: Population event rate over time (R213W)
     subplot(3, 2, 6);
-    plot_population_rate(mut_raster, mut_stats, 'R213W', [1.0, 0.4, 0.2], options);
+    plot_population_rate(mut_raster, mut_stats, lblB, colB, options);
     
-    sgtitle('Event Timing Raster Plots: WT vs R213W', 'FontSize', 16, 'FontWeight', 'bold');
+    sgtitle(['Event Timing Raster Plots: ' lblA ' vs ' lblB], 'FontSize', 16, 'FontWeight', 'bold');
     
     fprintf('  Created event timing raster plots\n');
 end

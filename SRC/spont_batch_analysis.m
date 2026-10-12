@@ -1,116 +1,158 @@
-function results = integrated_batch_analysis_final(folder_path, options)
-    % INTEGRATED_BATCH_ANALYSIS_FINAL - Complete analysis with fixed plotting built-in
-    % All improvements integrated: 0.01 Hz bins, active ROI focus, fixed text overlaps
-    
+function results = spont_batch_analysis(folder_path, options)
+    % SPONT_BATCH_ANALYSIS - Batch analysis of spontaneous glutamate release
+    %
+    % Counterpart to oneap_batch_analysis / twoap_batch_analysis for spontaneous
+    % recordings. Every file is processed once by spont_pipeline (rolling-median
+    % baseline -> dF/F -> corrected Schmitt event detection). Files are grouped
+    % by genotype x drug: genotype from config.groups (parse_group, fails loudly
+    % on an unrecognised or ambiguous name) and drug from the "+drug" token
+    % (parse_drug). The plots compare TWO groups at a time, so the comparison
+    % figures are made once per genotype pair within each drug condition.
+    %
+    % Inputs:
+    %   folder_path - folder with the spontaneous raw-mean CSVs
+    %   options     - struct: verbose, createPlots, frame_rate,
+    %                 recording_duration_s, create_*_plot switches
+    %
+    % Output:
+    %   results - .groups (one aggregate per genotype x drug group),
+    %             .comparisons (one per pair: .wt_data = group A,
+    %             .mut_data = group B, .comparison, .plot_handles, ...),
+    %             .processing_info
+
     if nargin < 2
         options = struct();
     end
-    
+
     % Set defaults
     if ~isfield(options, 'verbose'), options.verbose = true; end
     if ~isfield(options, 'createPlots'), options.createPlots = true; end
     if ~isfield(options, 'useParallel'), options.useParallel = true; end
     if ~isfield(options, 'continueOnError'), options.continueOnError = true; end
     if ~isfield(options, 'savePlots'), options.savePlots = false; end
-    
-    fprintf('=== Complete Integrated Batch Analysis: WT vs R213W ===\n');
+
+    evalc('config = tracenorm_config();');
+    config.dataType = 'Spont';
+
+    fprintf('=== Spontaneous Batch Analysis (genotype x drug) ===\n');
     fprintf('Folder: %s\n', folder_path);
-    
+
+    %% Step 1: find files and assign genotype x drug groups
+    if options.verbose
+        fprintf('\nStep 1: Finding and classifying data files...\n');
+    end
+    [files, genotypes, drugs] = classify_files_by_group(folder_path, config);
+    if isempty(files)
+        error('spont_batch_analysis:noFiles', 'No data files found in folder: %s', folder_path);
+    end
+
+    %% Step 2: process every file once
+    if options.verbose
+        fprintf('\nStep 2: Processing %d files...\n', numel(files));
+    end
+    tic;
+    file_results = process_files(files);
+    process_time = toc;
+    ok = ~cellfun(@isempty, file_results);
+    fprintf('  Processed %d/%d files successfully in %.3f s\n', sum(ok), numel(files), process_time);
+
+    %% Step 3: aggregate per genotype x drug group
+    if options.verbose
+        fprintf('\nStep 3: Aggregating by genotype x drug...\n');
+    end
+    [geno_list, drug_list] = genotype_drug_order(genotypes(ok), drugs(ok), config);
+    groups = struct('name', {}, 'genotype', {}, 'drug', {}, 'data', {}, ...
+        'file_results', {}, 'files', {});
+    for d = 1:numel(drug_list)
+        for g = 1:numel(geno_list)
+            mask = ok & strcmp(genotypes, geno_list{g}) & strcmp(drugs, drug_list{d});
+            if ~any(mask), continue; end
+            name = sprintf('%s %s', geno_list{g}, drug_list{d});
+            gd = aggregate_condition_data_integrated(file_results(mask), files(mask), name);
+            gd.color = group_color(geno_list{g}, d, numel(drug_list), config);
+            groups(end+1) = struct('name', name, 'genotype', geno_list{g}, ...
+                'drug', drug_list{d}, 'data', gd, 'file_results', {file_results(mask)}, ...
+                'files', {files(mask)}); %#ok<AGROW>
+            fprintf('  %s: %d files, %d total ROIs, %d total events\n', ...
+                name, gd.num_files, gd.total_rois, gd.total_events);
+        end
+    end
+
+    %% Steps 4-6: statistics + plots for each genotype pair within a drug
+    comparisons = {};
+    for d = 1:numel(drug_list)
+        idx = find(strcmp({groups.drug}, drug_list{d}));
+        for a = 1:numel(idx)
+            for b = a+1:numel(idx)
+                comparisons{end+1} = compare_pair(groups(idx(a)), groups(idx(b)), ...
+                    folder_path, process_time, options); %#ok<AGROW>
+            end
+        end
+    end
+    comparisons = [comparisons{:}];
+    if isempty(comparisons)
+        warning('spont_batch_analysis:noPairs', ...
+            'No drug condition has two genotypes; groups aggregated but nothing compared.');
+    end
+
+    results = struct();
+    results.groups          = groups;
+    results.comparisons     = comparisons;
+    results.processing_info = struct('folder_path', folder_path, 'files', {files}, ...
+        'genotypes', {genotypes}, 'drugs', {drugs}, 'process_time', process_time, ...
+        'timestamp', datetime('now'), ...
+        'frame_rate', getfield_safe(options, 'frame_rate', config.frame_rate), ...
+        'recording_duration_s', getfield_safe(options, 'recording_duration_s', config.recording_duration_s));
+end
+
+function results = compare_pair(ga, gb, folder_path, process_time, options)
+    % Two-group comparison (A = ga, B = gb) with the existing spont plots. The
+    % result is shaped like the old WT-vs-R213W results (wt_data = A slot,
+    % mut_data = B slot) because every plot module reads those fields; the
+    % real group names/colours travel in .condition / .color.
+    fprintf('\n--- %s vs %s ---\n', ga.name, gb.name);
+    wt_data  = ga.data;
+    mut_data = gb.data;
+
     try
-        %% Step 1: Find and classify CSV files
-        if options.verbose
-            fprintf('\nStep 1: Finding and classifying CSV files...\n');
-        end
-        
-        [wt_files, mut_files, all_files] = classify_files_by_condition_integrated(folder_path);
-        
-        fprintf('  Found %d WT files, %d R213W files (%d total)\n', ...
-            length(wt_files), length(mut_files), length(all_files));
-        
-        if isempty(wt_files) || isempty(mut_files)
-            error('Need both WT and R213W files for comparison. Found: %d WT, %d R213W', ...
-                length(wt_files), length(mut_files));
-        end
-        
-        %% Step 2: Process files with proper tracking
-        if options.verbose
-            fprintf('\nStep 2: Processing files with condition tracking...\n');
-        end
-        
-        tic;
-        [wt_results, mut_results] = process_files_with_tracking_integrated(wt_files, mut_files, options);
-        process_time = toc;
-        
-        wt_success = sum(~cellfun(@isempty, wt_results));
-        mut_success = sum(~cellfun(@isempty, mut_results));
-        
-        fprintf('  Processed WT: %d/%d files successfully\n', wt_success, length(wt_files));
-        fprintf('  Processed R213W: %d/%d files successfully\n', mut_success, length(mut_files));
-        fprintf('  Total processing time: %.3f s\n', process_time);
-        
-        %% Step 3: Aggregate data by condition
-        if options.verbose
-            fprintf('\nStep 3: Aggregating data by condition...\n');
-        end
-        
-        % Remove failed files
-        wt_valid = wt_results(~cellfun(@isempty, wt_results));
-        mut_valid = mut_results(~cellfun(@isempty, mut_results));
-        
-        fprintf('  Valid results - WT: %d files, R213W: %d files\n', ...
-            length(wt_valid), length(mut_valid));
-        
-        % Get corresponding file names for valid results
-        wt_valid_files = wt_files(~cellfun(@isempty, wt_results));
-        mut_valid_files = mut_files(~cellfun(@isempty, mut_results));
-        
-        % Aggregate condition data
-        wt_data = aggregate_condition_data_integrated(wt_valid, wt_valid_files, 'WT');
-        mut_data = aggregate_condition_data_integrated(mut_valid, mut_valid_files, 'R213W');
-        
-        fprintf('  WT: %d files, %d total ROIs, %d total events\n', ...
-            wt_data.num_files, wt_data.total_rois, wt_data.total_events);
-        fprintf('  R213W: %d files, %d total ROIs, %d total events\n', ...
-            mut_data.num_files, mut_data.total_rois, mut_data.total_events);
-        
         %% Step 4: Statistical comparison
         if options.verbose
-            fprintf('\nStep 4: Statistical comparison...\n');
+            fprintf('Step 4: Statistical comparison...\n');
         end
-        
         comparison = compare_conditions_statistical_integrated(wt_data, mut_data);
-        
+
         %% Step 5: Create core comparison visualizations
         plot_handles = [];
         if options.createPlots
             if options.verbose
-                fprintf('\nStep 5: Creating core comparison plots...\n');
+                fprintf('Step 5: Creating core comparison plots...\n');
             end
-            
             plot_handles = create_plots_integrated_final(wt_data, mut_data, comparison);
-            
             if options.savePlots
                 save_condition_plots_integrated(plot_handles, folder_path);
             end
         end
-        
-        %% Step 5.5: ASSEMBLE RESULTS STRUCTURE (before Step 6!)
+
+        %% Step 5.5: assemble the pair's results (the plot modules read these)
         results = struct();
+        results.group_a = ga.name;
+        results.group_b = gb.name;
+        results.drug    = ga.drug;
         results.wt_data = wt_data;
         results.mut_data = mut_data;
         results.comparison = comparison;
-        results.file_results = struct('wt_results', {wt_results}, 'mut_results', {mut_results});
+        results.file_results = struct('wt_results', {ga.file_results}, 'mut_results', {gb.file_results});
         results.plot_handles = plot_handles;
         results.processing_info = struct();
         results.processing_info.folder_path = folder_path;
-        results.processing_info.wt_files = wt_files;
-        results.processing_info.mut_files = mut_files;
+        results.processing_info.wt_files = ga.files;
+        results.processing_info.mut_files = gb.files;
         results.processing_info.process_time = process_time;
         results.processing_info.timestamp = datetime('now');
         results.processing_info.frame_rate = getfield_safe(options, 'frame_rate', 100);
         results.processing_info.recording_duration_s = getfield_safe(options, 'recording_duration_s', 30);
 
-       %% Step 6: Create ADDITIONAL modular visualizations
+        %% Step 6: Create ADDITIONAL modular visualizations
         additional_plots = struct();
         
         if options.createPlots && options.verbose
@@ -228,9 +270,10 @@ function plot_handles = create_plots_integrated_final(wt_data, mut_data, compari
 end
 
 function fig = create_frequency_plot_final(wt_data, mut_data, comparison)
+    [lblA, lblB, colA, colB] = spont_group_labels(wt_data, mut_data);   % group labels/colours
     % FREQUENCY PLOT: 0.01 Hz bins, mean labels on box plot
     
-    fig = figure('Name', 'Event Frequency Comparison: WT vs R213W (Active ROIs Only)', ...
+    fig = figure('Name', ['Event Frequency Comparison: ' lblA ' vs ' lblB ' (Active ROIs Only)'], ...
         'Position', [100, 100, 1200, 800]);
     
     wt_freqs = wt_data.all_roi_frequencies(wt_data.all_roi_frequencies > 0);
@@ -242,10 +285,10 @@ function fig = create_frequency_plot_final(wt_data, mut_data, comparison)
     edges = 0:0.02:(max_freq + 0.02);   % 20ms resolution
 
     hold on;
-    histogram(wt_freqs, edges, 'FaceColor', [0.2, 0.6, 1.0], 'FaceAlpha', 0.7, ...
-        'EdgeColor', 'none', 'DisplayName', sprintf('WT (n=%d active ROIs)', length(wt_freqs)));
-    histogram(mut_freqs, edges, 'FaceColor', [1.0, 0.4, 0.2], 'FaceAlpha', 0.7, ...
-        'EdgeColor', 'none', 'DisplayName', sprintf('R213W (n=%d active ROIs)', length(mut_freqs)));
+    histogram(wt_freqs, edges, 'FaceColor', colA, 'FaceAlpha', 0.7, ...
+        'EdgeColor', 'none', 'DisplayName', sprintf([lblA ' (n=%d active ROIs)'], length(wt_freqs)));
+    histogram(mut_freqs, edges, 'FaceColor', colB, 'FaceAlpha', 0.7, ...
+        'EdgeColor', 'none', 'DisplayName', sprintf([lblB ' (n=%d active ROIs)'], length(mut_freqs)));
     
     xlabel('Event Frequency (Hz)');
     ylabel('Active ROI Count');
@@ -262,7 +305,7 @@ function fig = create_frequency_plot_final(wt_data, mut_data, comparison)
     all_freqs = [wt_freqs, mut_freqs];
     groups = [ones(1, length(wt_freqs)), 2*ones(1, length(mut_freqs))];
     
-    boxplot(all_freqs, groups, 'Labels', {'WT', 'R213W'}, 'Colors', [0.2, 0.6, 1.0; 1.0, 0.4, 0.2]);
+    boxplot(all_freqs, groups, 'Labels', {lblA, lblB}, 'Colors', [colA; colB]);
     ylabel('Event Frequency (Hz)');
     title('Frequency Box Plot Comparison');
     grid on;
@@ -273,9 +316,9 @@ function fig = create_frequency_plot_final(wt_data, mut_data, comparison)
     plot(2, mut_mean, 'rd', 'MarkerSize', 8, 'MarkerFaceColor', 'red', 'LineWidth', 2);
     
     y_range = max(all_freqs) - min(all_freqs);
-    text(1, wt_mean + y_range * 0.05, sprintf('WT: %.3f Hz', wt_mean), ...
+    text(1, wt_mean + y_range * 0.05, sprintf([lblA ': %.3f Hz'], wt_mean), ...
         'HorizontalAlignment', 'center', 'BackgroundColor', 'white', 'EdgeColor', 'blue', 'FontSize', 10);
-    text(2, mut_mean + y_range * 0.08, sprintf('R213W: %.3f Hz', mut_mean), ...
+    text(2, mut_mean + y_range * 0.08, sprintf([lblB ': %.3f Hz'], mut_mean), ...
         'HorizontalAlignment', 'center', 'BackgroundColor', 'white', 'EdgeColor', 'red', 'FontSize', 10);
     
     % Statistical annotation
@@ -303,9 +346,9 @@ function fig = create_frequency_plot_final(wt_data, mut_data, comparison)
     [wt_f, wt_x] = ecdf(wt_freqs);
     [mut_f, mut_x] = ecdf(mut_freqs);
     
-    plot(wt_x, wt_f, 'b-', 'LineWidth', 2, 'DisplayName', 'WT');
+    plot(wt_x, wt_f, 'b-', 'LineWidth', 2, 'DisplayName', lblA);
     hold on;
-    plot(mut_x, mut_f, 'r-', 'LineWidth', 2, 'DisplayName', 'R213W');
+    plot(mut_x, mut_f, 'r-', 'LineWidth', 2, 'DisplayName', lblB);
     
     xlabel('Event Frequency (Hz)');
     ylabel('Cumulative Probability');
@@ -318,29 +361,30 @@ function fig = create_frequency_plot_final(wt_data, mut_data, comparison)
     summary_text = {
         'FREQUENCY COMPARISON SUMMARY';
         '';
-        sprintf('WT (n = %d active ROIs):', length(wt_freqs));
+        sprintf([lblA ' (n = %d active ROIs):'], length(wt_freqs));
         sprintf('  Mean: %.4f ± %.4f Hz', wt_mean, std(wt_freqs));
         sprintf('  Median: %.4f Hz', median(wt_freqs));
         '';
-        sprintf('R213W (n = %d active ROIs):', length(mut_freqs));
+        sprintf([lblB ' (n = %d active ROIs):'], length(mut_freqs));
         sprintf('  Mean: %.4f ± %.4f Hz', mut_mean, std(mut_freqs));
         sprintf('  Median: %.4f Hz', median(mut_freqs));
         '';
         'STATISTICAL TEST:';
         'Mann-Whitney U test';
-        sprintf('p < 0.001 ***');
+        p_label(comparison, 'frequency_pvalue');
     };
     
     text(0.05, 0.95, summary_text, 'FontSize', 10, 'VerticalAlignment', 'top', ...
         'HorizontalAlignment', 'left', 'Units', 'normalized', 'FontName', 'FixedWidth');
     
-    sgtitle('Event Frequency Comparison: WT vs R213W (Active ROIs Only)', 'FontSize', 16, 'FontWeight', 'bold');
+    sgtitle(['Event Frequency Comparison: ' lblA ' vs ' lblB ' (Active ROIs Only)'], 'FontSize', 16, 'FontWeight', 'bold');
 end
 
 function fig = create_activity_plot_final(wt_data, mut_data, comparison)
+    [lblA, lblB, colA, colB] = spont_group_labels(wt_data, mut_data);   % group labels/colours
     % ACTIVITY PLOT: Active ROIs only (no 0-event ROIs)
     
-    fig = figure('Name', 'Active ROI Comparison: WT vs R213W', 'Position', [300, 100, 1200, 800]);
+    fig = figure('Name', ['Active ROI Comparison: ' lblA ' vs ' lblB], 'Position', [300, 100, 1200, 800]);
     
     wt_events = wt_data.all_roi_event_counts(wt_data.all_roi_event_counts > 0);
     mut_events = mut_data.all_roi_event_counts(mut_data.all_roi_event_counts > 0);
@@ -352,10 +396,10 @@ function fig = create_activity_plot_final(wt_data, mut_data, comparison)
         edges = 0.5:1:(max_events + 0.5);
         
         hold on;
-        histogram(wt_events, edges, 'FaceColor', [0.2, 0.6, 1.0], 'FaceAlpha', 0.7, ...
-            'EdgeColor', 'none', 'DisplayName', sprintf('WT (n=%d active ROIs)', length(wt_events)));
-        histogram(mut_events, edges, 'FaceColor', [1.0, 0.4, 0.2], 'FaceAlpha', 0.7, ...
-            'EdgeColor', 'none', 'DisplayName', sprintf('R213W (n=%d active ROIs)', length(mut_events)));
+        histogram(wt_events, edges, 'FaceColor', colA, 'FaceAlpha', 0.7, ...
+            'EdgeColor', 'none', 'DisplayName', sprintf([lblA ' (n=%d active ROIs)'], length(wt_events)));
+        histogram(mut_events, edges, 'FaceColor', colB, 'FaceAlpha', 0.7, ...
+            'EdgeColor', 'none', 'DisplayName', sprintf([lblB ' (n=%d active ROIs)'], length(mut_events)));
         
         xlabel('Events per ROI'); ylabel('Active ROI Count');
         title('Events per Active ROI Distribution'); legend('Location', 'best'); grid on;
@@ -384,18 +428,19 @@ function fig = create_activity_plot_final(wt_data, mut_data, comparison)
         xlabel('Activity Category'); ylabel('Active ROI Count');
         title('Active ROI Categories (No Inactive ROIs)');
         set(gca, 'XTickLabel', activity_bins(:, 1));
-        legend('WT', 'R213W', 'Location', 'best'); grid on; xtickangle(45);
+        legend(lblA, lblB, 'Location', 'best'); grid on; xtickangle(45);
     end
     
-    sgtitle('Active ROI Comparison: WT vs R213W (Inactive ROIs Excluded)', 'FontSize', 16, 'FontWeight', 'bold');
+    sgtitle(['Active ROI Comparison: ' lblA ' vs ' lblB ' (Inactive ROIs Excluded)'], 'FontSize', 16, 'FontWeight', 'bold');
 end
 
 %% === OTHER REQUIRED FUNCTIONS ===
 
 function fig = create_amplitude_plot_final(wt_data, mut_data, comparison)
+    [lblA, lblB, colA, colB] = spont_group_labels(wt_data, mut_data);   % group labels/colours
     % AMPLITUDE PLOT: Full comparison with histograms and box plots
     
-    fig = figure('Name', 'Event Amplitude Comparison: WT vs R213W', 'Position', [200, 100, 1200, 800]);
+    fig = figure('Name', ['Event Amplitude Comparison: ' lblA ' vs ' lblB], 'Position', [200, 100, 1200, 800]);
     
     wt_amps = wt_data.all_individual_events;
     mut_amps = mut_data.all_individual_events;
@@ -414,10 +459,10 @@ function fig = create_amplitude_plot_final(wt_data, mut_data, comparison)
     edges = linspace(min_amp, max_amp, 50);
     
     hold on;
-    histogram(wt_amps, edges, 'FaceColor', [0.2, 0.6, 1.0], 'FaceAlpha', 0.7, ...
-        'EdgeColor', 'none', 'DisplayName', sprintf('WT (n=%d events)', length(wt_amps)));
-    histogram(mut_amps, edges, 'FaceColor', [1.0, 0.4, 0.2], 'FaceAlpha', 0.7, ...
-        'EdgeColor', 'none', 'DisplayName', sprintf('R213W (n=%d events)', length(mut_amps)));
+    histogram(wt_amps, edges, 'FaceColor', colA, 'FaceAlpha', 0.7, ...
+        'EdgeColor', 'none', 'DisplayName', sprintf([lblA ' (n=%d events)'], length(wt_amps)));
+    histogram(mut_amps, edges, 'FaceColor', colB, 'FaceAlpha', 0.7, ...
+        'EdgeColor', 'none', 'DisplayName', sprintf([lblB ' (n=%d events)'], length(mut_amps)));
     
     xlabel('Event Amplitude (dF/F)');
     ylabel('Event Count');
@@ -439,7 +484,7 @@ function fig = create_amplitude_plot_final(wt_data, mut_data, comparison)
     
     all_amps = [wt_sample, mut_sample];
     groups = [ones(1, length(wt_sample)), 2*ones(1, length(mut_sample))];
-    boxplot(all_amps, groups, 'Labels', {'WT', 'R213W'}, 'Colors', [0.2, 0.6, 1.0; 1.0, 0.4, 0.2]);
+    boxplot(all_amps, groups, 'Labels', {lblA, lblB}, 'Colors', [colA; colB]);
     ylabel('Event Amplitude (dF/F)');
     title('Amplitude Box Plot Comparison');
     grid on;
@@ -469,9 +514,9 @@ function fig = create_amplitude_plot_final(wt_data, mut_data, comparison)
     [wt_f, wt_x] = ecdf(wt_amps);
     [mut_f, mut_x] = ecdf(mut_amps);
     
-    plot(wt_x, wt_f, 'b-', 'LineWidth', 2, 'DisplayName', 'WT');
+    plot(wt_x, wt_f, 'b-', 'LineWidth', 2, 'DisplayName', lblA);
     hold on;
-    plot(mut_x, mut_f, 'r-', 'LineWidth', 2, 'DisplayName', 'R213W');
+    plot(mut_x, mut_f, 'r-', 'LineWidth', 2, 'DisplayName', lblB);
     
     xlabel('Event Amplitude (dF/F)');
     ylabel('Cumulative Probability');
@@ -484,12 +529,12 @@ function fig = create_amplitude_plot_final(wt_data, mut_data, comparison)
     summary_text = {
         'AMPLITUDE COMPARISON SUMMARY';
         '';
-        sprintf('WT (n = %d events):', length(wt_amps));
+        sprintf([lblA ' (n = %d events):'], length(wt_amps));
         sprintf('  Mean: %.4f ± %.4f dF/F', wt_mean, std(wt_amps));
         sprintf('  Median: %.4f dF/F', median(wt_amps));
         sprintf('  Range: %.4f - %.4f dF/F', min(wt_amps), max(wt_amps));
         '';
-        sprintf('R213W (n = %d events):', length(mut_amps));
+        sprintf([lblB ' (n = %d events):'], length(mut_amps));
         sprintf('  Mean: %.4f ± %.4f dF/F', mut_mean, std(mut_amps));
         sprintf('  Median: %.4f dF/F', median(mut_amps));
         sprintf('  Range: %.4f - %.4f dF/F', min(mut_amps), max(mut_amps));
@@ -509,13 +554,14 @@ function fig = create_amplitude_plot_final(wt_data, mut_data, comparison)
     text(0.05, 0.95, summary_text, 'FontSize', 10, 'VerticalAlignment', 'top', ...
         'HorizontalAlignment', 'left', 'Units', 'normalized', 'FontName', 'FixedWidth');
     
-    sgtitle('Event Amplitude Comparison: WT vs R213W', 'FontSize', 16, 'FontWeight', 'bold');
+    sgtitle(['Event Amplitude Comparison: ' lblA ' vs ' lblB], 'FontSize', 16, 'FontWeight', 'bold');
 end
 
 function fig = create_file_summary_final(wt_data, mut_data, comparison)
+    [lblA, lblB, colA, colB] = spont_group_labels(wt_data, mut_data);   % group labels/colours
     % FILE SUMMARY: Per-file comparisons and overall summary
     
-    fig = figure('Name', 'File-Level Summary: WT vs R213W', 'Position', [400, 100, 1200, 800]);
+    fig = figure('Name', ['File-Level Summary: ' lblA ' vs ' lblB], 'Position', [400, 100, 1200, 800]);
     
     % 2x2 layout
     subplot(2, 2, 1);
@@ -525,9 +571,9 @@ function fig = create_file_summary_final(wt_data, mut_data, comparison)
         
         hold on;
         bar(1:length(wt_events_per_file), wt_events_per_file, 0.4, ...
-            'FaceColor', [0.2, 0.6, 1.0], 'DisplayName', 'WT');
+            'FaceColor', colA, 'DisplayName', lblA);
         bar((1:length(mut_events_per_file)) + 0.4, mut_events_per_file, 0.4, ...
-            'FaceColor', [1.0, 0.4, 0.2], 'DisplayName', 'R213W');
+            'FaceColor', colB, 'DisplayName', lblB);
         
         xlabel('File Index');
         ylabel('Total Events');
@@ -543,9 +589,9 @@ function fig = create_file_summary_final(wt_data, mut_data, comparison)
         
         hold on;
         bar(1:length(wt_active_per_file), wt_active_per_file, 0.4, ...
-            'FaceColor', [0.2, 0.6, 1.0], 'DisplayName', 'WT');
+            'FaceColor', colA, 'DisplayName', lblA);
         bar((1:length(mut_active_per_file)) + 0.4, mut_active_per_file, 0.4, ...
-            'FaceColor', [1.0, 0.4, 0.2], 'DisplayName', 'R213W');
+            'FaceColor', colB, 'DisplayName', lblB);
         
         xlabel('File Index');
         ylabel('Active ROIs');
@@ -561,9 +607,9 @@ function fig = create_file_summary_final(wt_data, mut_data, comparison)
         
         hold on;
         bar(1:length(wt_activity_fractions), wt_activity_fractions, 0.4, ...
-            'FaceColor', [0.2, 0.6, 1.0], 'DisplayName', 'WT');
+            'FaceColor', colA, 'DisplayName', lblA);
         bar((1:length(mut_activity_fractions)) + 0.4, mut_activity_fractions, 0.4, ...
-            'FaceColor', [1.0, 0.4, 0.2], 'DisplayName', 'R213W');
+            'FaceColor', colB, 'DisplayName', lblB);
         
         xlabel('File Index');
         ylabel('Active ROI Fraction (%)');
@@ -578,80 +624,69 @@ function fig = create_file_summary_final(wt_data, mut_data, comparison)
         'FILE-LEVEL SUMMARY';
         '';
         sprintf('Dataset Size:');
-        sprintf('  WT: %d files, %d ROIs, %d events', ...
+        sprintf(['  ' lblA ': %d files, %d ROIs, %d events'], ...
             wt_data.num_files, wt_data.total_rois, wt_data.total_events);
-        sprintf('  R213W: %d files, %d ROIs, %d events', ...
+        sprintf(['  ' lblB ': %d files, %d ROIs, %d events'], ...
             mut_data.num_files, mut_data.total_rois, mut_data.total_events);
         '';
         sprintf('Per-File Averages:');
-        sprintf('  WT events/file: %.0f ± %.0f', ...
+        sprintf(['  ' lblA ' events/file: %.0f ± %.0f'], ...
             mean(arrayfun(@(x) x.num_events, wt_data.file_summaries)), ...
             std(arrayfun(@(x) x.num_events, wt_data.file_summaries)));
-        sprintf('  R213W events/file: %.0f ± %.0f', ...
+        sprintf(['  ' lblB ' events/file: %.0f ± %.0f'], ...
             mean(arrayfun(@(x) x.num_events, mut_data.file_summaries)), ...
             std(arrayfun(@(x) x.num_events, mut_data.file_summaries)));
         '';
-        sprintf('  WT active ROIs/file: %.0f ± %.0f', ...
+        sprintf(['  ' lblA ' active ROIs/file: %.0f ± %.0f'], ...
             mean(arrayfun(@(x) x.active_rois, wt_data.file_summaries)), ...
             std(arrayfun(@(x) x.active_rois, wt_data.file_summaries)));
-        sprintf('  R213W active ROIs/file: %.0f ± %.0f', ...
+        sprintf(['  ' lblB ' active ROIs/file: %.0f ± %.0f'], ...
             mean(arrayfun(@(x) x.active_rois, mut_data.file_summaries)), ...
             std(arrayfun(@(x) x.active_rois, mut_data.file_summaries)));
         '';
         sprintf('Statistical Tests:');
-        sprintf('  Frequency: p < 0.001 ***');
-        sprintf('  Amplitude: p < 0.001 ***');
+        ['  Frequency: ' p_label(comparison, 'frequency_pvalue')];
+        ['  Amplitude: ' p_label(comparison, 'amplitude_pvalue')];
     };
     
     text(0.05, 0.95, summary_text, 'FontSize', 10, 'VerticalAlignment', 'top', ...
         'HorizontalAlignment', 'left', 'Units', 'normalized', 'FontName', 'FixedWidth');
     
-    sgtitle('File-Level Summary: WT vs R213W', 'FontSize', 16, 'FontWeight', 'bold');
+    sgtitle(['File-Level Summary: ' lblA ' vs ' lblB], 'FontSize', 16, 'FontWeight', 'bold');
 end
 
-function [wt_files, mut_files, all_files] = classify_files_by_condition_integrated(folder_path)
-    csv_files = list_data_files(folder_path);   % .csv / .xlsx / .xls
-    all_files = {}; wt_files = {}; mut_files = {};
-    
-    for i = 1:length(csv_files)
-        file_path = fullfile(csv_files(i).folder, csv_files(i).name);
-        filename = csv_files(i).name;
-        all_files{end+1} = file_path;
-        
-        if contains(filename, 'WT', 'IgnoreCase', true)
-            wt_files{end+1} = file_path;
-            fprintf('  Classified as WT: %s\n', filename);
-        elseif contains(filename, 'R213W', 'IgnoreCase', true)
-            mut_files{end+1} = file_path;
-            fprintf('  Classified as R213W: %s\n', filename);
-        end
+function [files, genotypes, drugs] = classify_files_by_group(folder_path, config)
+    % Genotype (config.groups via parse_group - errors on an unknown or
+    % ambiguous name rather than silently dropping or mislabelling a file) and
+    % drug (parse_drug) for every data file. A Recordings.csv metadata file in
+    % the folder is not a data file and is skipped.
+    listing = list_data_files(folder_path);   % .csv / .xlsx / .xls
+    if ~isempty(listing)
+        listing = listing(~strcmpi({listing.name}, config.metadata.filename));
+    end
+    files = cell(1, numel(listing)); genotypes = files; drugs = files;
+    for i = 1:numel(listing)
+        files{i}     = fullfile(listing(i).folder, listing(i).name);
+        genotypes{i} = parse_group(listing(i).name, config);
+        drugs{i}     = parse_drug(listing(i).name, config);
+        fprintf('  %-12s %-10s %s\n', genotypes{i}, drugs{i}, listing(i).name);
     end
 end
 
-function [wt_results, mut_results] = process_files_with_tracking_integrated(wt_files, mut_files, options)
-    % Process WT files
-    wt_results = cell(length(wt_files), 1);
-    for i = 1:length(wt_files)
+function file_results = process_files(files)
+    % Run spont_pipeline on every file once. A failure is reported (not
+    % silently dropped) and leaves an empty slot.
+    file_results = cell(1, numel(files));
+    for i = 1:numel(files)
         try
-            result = main_pipeline(wt_files{i}, struct('createPlots', false, 'verbose', false));
+            result = spont_pipeline(files{i}, struct('createPlots', false, 'verbose', false));
             if isfield(result, 'fileResults') && ~isempty(result.fileResults)
-                wt_results{i} = result.fileResults{1};
+                file_results{i} = result.fileResults{1};
+            else
+                fprintf('  [%d/%d] NO RESULT %s\n', i, numel(files), files{i});
             end
-        catch
-            wt_results{i} = [];
-        end
-    end
-    
-    % Process R213W files
-    mut_results = cell(length(mut_files), 1);
-    for i = 1:length(mut_files)
-        try
-            result = main_pipeline(mut_files{i}, struct('createPlots', false, 'verbose', false));
-            if isfield(result, 'fileResults') && ~isempty(result.fileResults)
-                mut_results{i} = result.fileResults{1};
-            end
-        catch
-            mut_results{i} = [];
+        catch ME
+            fprintf('  [%d/%d] FAILED %s: %s\n', i, numel(files), files{i}, ME.message);
         end
     end
 end
@@ -705,6 +740,7 @@ function condition_data = aggregate_condition_data_integrated(file_results, file
 end
 
 function comparison = compare_conditions_statistical_integrated(wt_data, mut_data)
+    [lblA, lblB, colA, colB] = spont_group_labels(wt_data, mut_data);   % group labels/colours
     comparison = struct('test_type', 'Mann-Whitney U (ranksum)', 'alpha', 0.05);
     
     wt_freqs = wt_data.all_roi_frequencies(wt_data.all_roi_frequencies > 0);
@@ -712,7 +748,7 @@ function comparison = compare_conditions_statistical_integrated(wt_data, mut_dat
     
     if ~isempty(wt_freqs) && ~isempty(mut_freqs)
         [comparison.frequency_pvalue, comparison.frequency_h] = ranksum(wt_freqs, mut_freqs);
-        fprintf('    Frequency: WT=%.4f Hz, R213W=%.4f Hz, p=%.6f\n', ...
+        fprintf(['    Frequency: ' lblA '=%.4f Hz, ' lblB '=%.4f Hz, p=%.6f\n'], ...
             mean(wt_freqs), mean(mut_freqs), comparison.frequency_pvalue);
     end
     
@@ -721,7 +757,7 @@ function comparison = compare_conditions_statistical_integrated(wt_data, mut_dat
     
     if ~isempty(wt_amps) && ~isempty(mut_amps)
         [comparison.amplitude_pvalue, comparison.amplitude_h] = ranksum(wt_amps, mut_amps);
-        fprintf('    Amplitude: WT=%.4f dF/F, R213W=%.4f dF/F, p=%.6f\n', ...
+        fprintf(['    Amplitude: ' lblA '=%.4f dF/F, ' lblB '=%.4f dF/F, p=%.6f\n'], ...
             mean(wt_amps), mean(mut_amps), comparison.amplitude_pvalue);
     end
     
@@ -739,27 +775,28 @@ function comparison = compare_conditions_statistical_integrated(wt_data, mut_dat
 end
 
 function print_condition_summary_integrated(results)
+    [lblA, lblB, colA, colB] = spont_group_labels(results);   % group labels/colours
     fprintf('\n=== INTEGRATED CONDITION COMPARISON SUMMARY ===\n');
     wt = results.wt_data; mut = results.mut_data; comp = results.comparison;
     
     fprintf('Dataset Overview:\n');
-    fprintf('  WT: %d files, %d ROIs, %d events\n', wt.num_files, wt.total_rois, wt.total_events);
-    fprintf('  R213W: %d files, %d ROIs, %d events\n', mut.num_files, mut.total_rois, mut.total_events);
+    fprintf(['  ' lblA ': %d files, %d ROIs, %d events\n'], wt.num_files, wt.total_rois, wt.total_events);
+    fprintf(['  ' lblB ': %d files, %d ROIs, %d events\n'], mut.num_files, mut.total_rois, mut.total_events);
     
     fprintf('\nEvent Frequency (Active ROIs only):\n');
-    fprintf('  WT: %.4f ± %.4f Hz (n=%d ROIs)\n', ...
+    fprintf(['  ' lblA ': %.4f ± %.4f Hz (n=%d ROIs)\n'], ...
         wt.stats.frequency.active_rois.mean, wt.stats.frequency.active_rois.std, wt.stats.frequency.active_rois.count);
-    fprintf('  R213W: %.4f ± %.4f Hz (n=%d ROIs)\n', ...
+    fprintf(['  ' lblB ': %.4f ± %.4f Hz (n=%d ROIs)\n'], ...
         mut.stats.frequency.active_rois.mean, mut.stats.frequency.active_rois.std, mut.stats.frequency.active_rois.count);
     
     if isfield(comp, 'frequency_pvalue')
-        fprintf('  Statistical difference: p = %.6f *SIGNIFICANT*\n', comp.frequency_pvalue);
+        fprintf('  Mann-Whitney U (ROI-pooled): %s\n', p_label(comp, 'frequency_pvalue'));
     end
     
     fprintf('\nActive ROI Fraction:\n');
-    fprintf('  WT: %.1f%% (%d/%d ROIs)\n', ...
+    fprintf(['  ' lblA ': %.1f%% (%d/%d ROIs)\n'], ...
         100 * wt.stats.frequency.active_rois.fraction, wt.stats.frequency.active_rois.count, wt.total_rois);
-    fprintf('  R213W: %.1f%% (%d/%d ROIs)\n', ...
+    fprintf(['  ' lblB ': %.1f%% (%d/%d ROIs)\n'], ...
         100 * mut.stats.frequency.active_rois.fraction, mut.stats.frequency.active_rois.count, mut.total_rois);
     
     fprintf('\n===============================================\n');
@@ -767,6 +804,21 @@ end
 
 function save_condition_plots_integrated(plot_handles, folder_path)
     % Optional plot saving
+end
+
+function txt = p_label(comparison, field)
+    % p-value text from the actual test result (never a fixed string).
+    if ~isfield(comparison, field) || isnan(comparison.(field))
+        txt = 'p = n/a';
+    elseif comparison.(field) < 0.001
+        txt = 'p < 0.001 ***';
+    elseif comparison.(field) < 0.01
+        txt = sprintf('p = %.3f **', comparison.(field));
+    elseif comparison.(field) < 0.05
+        txt = sprintf('p = %.3f *', comparison.(field));
+    else
+        txt = sprintf('p = %.3f (ns)', comparison.(field));
+    end
 end
 
 function value = getfield_safe(s, field, default)

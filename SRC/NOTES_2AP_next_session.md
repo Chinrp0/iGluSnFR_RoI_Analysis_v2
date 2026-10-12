@@ -61,10 +61,10 @@ Shared plot helpers added: `draw_ppr_series`, `finish_ppr_axis`.
   not noise-excluded; NOT response-gated, so no selection bias). Tightens SEM on the primary ROM +
   amplitude figures; mean barely moves (R213W 90ms 1.71->1.70), confirming noise was averaging out.
 - **Figure saving refactored to shared io/ helpers**: `io/make_figures_dir.m` (dated auto-increment
-  dir next to data) + `io/save_open_figures.m` (PNG+FIG of given/all open figs). `run_pipeline_fixed`
+  dir next to data) + `io/save_open_figures.m` (PNG+FIG of given/all open figs). `run_pipeline`
   now calls these (local `make_output_dir`/`save_all_figures` deleted). `twoap_batch_analysis` gained
-  `options.saveFigures` (default FALSE so run_pipeline_fixed doesn't double-save) -> saves its own
-  handles + sets `results.output_dir`. Normal run path (run_pipeline_fixed) already saved the new
+  `options.saveFigures` (default FALSE so run_pipeline doesn't double-save) -> saves its own
+  handles + sets `results.output_dir`. Normal run path (run_pipeline) already saved the new
   figures automatically; opt-in is for direct/standalone calls.
 - **Responder QC tightened in `twoap_analyzer.m`** (noise ROIs like ROI189 with negative PPR):
   1) `window_peak` now uses **findpeaks** (genuine local max >= upper + MinPeakDistance), matching 1AP,

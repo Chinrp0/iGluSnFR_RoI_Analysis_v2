@@ -1,5 +1,5 @@
-function results = main_pipeline(folder, options)
-    % MAIN_PIPELINE - Orchestrates fluorescent imaging analysis with corrected Schmitt trigger
+function results = spont_pipeline(folder, options)
+    % SPONT_PIPELINE - Orchestrates fluorescent imaging analysis with corrected Schmitt trigger
     % UPDATED VERSION: Integrates corrected_schmitt_detector with proper noise estimation
     
     % Handle optional arguments

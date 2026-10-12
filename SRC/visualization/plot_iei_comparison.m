@@ -1,9 +1,10 @@
 function fig = plot_iei_comparison(results, options)
+    [lblA, lblB, colA, colB] = spont_group_labels(results);   % group labels/colours
     % PLOT_IEI_COMPARISON - Inter-Event Interval (IEI) distribution comparison
     % Shows temporal patterning of events: regular vs irregular firing
     %
     % Args:
-    %   results - Output from integrated_batch_analysis_final()
+    %   results - Output from spont_batch_analysis()
     %   options - Optional struct with:
     %             .frame_rate (default: 100 Hz for 10ms exposure)
     %             .max_iei_s (default: 10s, max IEI to plot)
@@ -24,11 +25,11 @@ function fig = plot_iei_comparison(results, options)
     [wt_ieis, wt_stats] = extract_all_ieis(results.file_results.wt_results, options.frame_rate);
     [mut_ieis, mut_stats] = extract_all_ieis(results.file_results.mut_results, options.frame_rate);
     
-    fprintf('  WT: %d IEIs from %d ROIs\n', length(wt_ieis), wt_stats.num_rois_with_multiple_events);
-    fprintf('  R213W: %d IEIs from %d ROIs\n', length(mut_ieis), mut_stats.num_rois_with_multiple_events);
+    fprintf(['  ' lblA ': %d IEIs from %d ROIs\n'], length(wt_ieis), wt_stats.num_rois_with_multiple_events);
+    fprintf(['  ' lblB ': %d IEIs from %d ROIs\n'], length(mut_ieis), mut_stats.num_rois_with_multiple_events);
     
     %% Create figure
-    fig = figure('Name', 'Inter-Event Interval Comparison: WT vs R213W', ...
+    fig = figure('Name', ['Inter-Event Interval Comparison: ' lblA ' vs ' lblB], ...
         'Position', [100, 100, 1400, 900]);
     
     % Filter to reasonable range
@@ -40,10 +41,10 @@ function fig = plot_iei_comparison(results, options)
     edges = logspace(log10(0.01), log10(options.max_iei_s), 50);
     
     hold on;
-    histogram(wt_ieis_plot, edges, 'FaceColor', [0.2, 0.6, 1.0], 'FaceAlpha', 0.7, ...
-        'EdgeColor', 'none', 'DisplayName', sprintf('WT (n=%d)', length(wt_ieis_plot)));
-    histogram(mut_ieis_plot, edges, 'FaceColor', [1.0, 0.4, 0.2], 'FaceAlpha', 0.7, ...
-        'EdgeColor', 'none', 'DisplayName', sprintf('R213W (n=%d)', length(mut_ieis_plot)));
+    histogram(wt_ieis_plot, edges, 'FaceColor', colA, 'FaceAlpha', 0.7, ...
+        'EdgeColor', 'none', 'DisplayName', sprintf([lblA ' (n=%d)'], length(wt_ieis_plot)));
+    histogram(mut_ieis_plot, edges, 'FaceColor', colB, 'FaceAlpha', 0.7, ...
+        'EdgeColor', 'none', 'DisplayName', sprintf([lblB ' (n=%d)'], length(mut_ieis_plot)));
     
     set(gca, 'XScale', 'log');
     xlabel('Inter-Event Interval (s)');
@@ -57,10 +58,10 @@ function fig = plot_iei_comparison(results, options)
     edges_linear = 0:options.bin_size_ms/1000:5;  % 0-5s with specified bin size
     
     hold on;
-    histogram(wt_ieis_plot, edges_linear, 'FaceColor', [0.2, 0.6, 1.0], 'FaceAlpha', 0.7, ...
-        'EdgeColor', 'none', 'DisplayName', 'WT');
-    histogram(mut_ieis_plot, edges_linear, 'FaceColor', [1.0, 0.4, 0.2], 'FaceAlpha', 0.7, ...
-        'EdgeColor', 'none', 'DisplayName', 'R213W');
+    histogram(wt_ieis_plot, edges_linear, 'FaceColor', colA, 'FaceAlpha', 0.7, ...
+        'EdgeColor', 'none', 'DisplayName', lblA);
+    histogram(mut_ieis_plot, edges_linear, 'FaceColor', colB, 'FaceAlpha', 0.7, ...
+        'EdgeColor', 'none', 'DisplayName', lblB);
     
     xlabel('Inter-Event Interval (s)');
     ylabel('Count');
@@ -74,9 +75,9 @@ function fig = plot_iei_comparison(results, options)
     [wt_f, wt_x] = ecdf(wt_ieis_plot);
     [mut_f, mut_x] = ecdf(mut_ieis_plot);
     
-    plot(wt_x, wt_f, 'b-', 'LineWidth', 2, 'DisplayName', 'WT');
+    plot(wt_x, wt_f, 'b-', 'LineWidth', 2, 'DisplayName', lblA);
     hold on;
-    plot(mut_x, mut_f, 'r-', 'LineWidth', 2, 'DisplayName', 'R213W');
+    plot(mut_x, mut_f, 'r-', 'LineWidth', 2, 'DisplayName', lblB);
     
     xlabel('Inter-Event Interval (s)');
     ylabel('Cumulative Probability');
@@ -87,8 +88,8 @@ function fig = plot_iei_comparison(results, options)
     % Add median lines
     wt_median = median(wt_ieis_plot);
     mut_median = median(mut_ieis_plot);
-    xline(wt_median, 'b--', sprintf('WT: %.2fs', wt_median), 'LineWidth', 1.5);
-    xline(mut_median, 'r--', sprintf('R213W: %.2fs', mut_median), 'LineWidth', 1.5);
+    xline(wt_median, 'b--', sprintf([lblA ': %.2fs'], wt_median), 'LineWidth', 1.5);
+    xline(mut_median, 'r--', sprintf([lblB ': %.2fs'], mut_median), 'LineWidth', 1.5);
     
     %% Subplot 4: Box Plot Comparison
     subplot(2, 3, 4);
@@ -97,8 +98,8 @@ function fig = plot_iei_comparison(results, options)
     all_ieis = [wt_ieis_plot; mut_ieis_plot];
     groups = [ones(length(wt_ieis_plot), 1); 2*ones(length(mut_ieis_plot), 1)];
     
-    boxplot(all_ieis, groups, 'Labels', {'WT', 'R213W'}, ...
-        'Colors', [0.2, 0.6, 1.0; 1.0, 0.4, 0.2]);
+    boxplot(all_ieis, groups, 'Labels', {lblA, lblB}, ...
+        'Colors', [colA; colB]);
     ylabel('Inter-Event Interval (s)');
     title('IEI Box Plot Comparison');
     grid on;
@@ -143,10 +144,10 @@ function fig = plot_iei_comparison(results, options)
     if ~isempty(wt_cv_valid) && ~isempty(mut_cv_valid)
         edges_cv = 0:0.1:3;
         hold on;
-        histogram(wt_cv_valid, edges_cv, 'FaceColor', [0.2, 0.6, 1.0], 'FaceAlpha', 0.7, ...
-            'EdgeColor', 'none', 'DisplayName', 'WT', 'Normalization', 'probability');
-        histogram(mut_cv_valid, edges_cv, 'FaceColor', [1.0, 0.4, 0.2], 'FaceAlpha', 0.7, ...
-            'EdgeColor', 'none', 'DisplayName', 'R213W', 'Normalization', 'probability');
+        histogram(wt_cv_valid, edges_cv, 'FaceColor', colA, 'FaceAlpha', 0.7, ...
+            'EdgeColor', 'none', 'DisplayName', lblA, 'Normalization', 'probability');
+        histogram(mut_cv_valid, edges_cv, 'FaceColor', colB, 'FaceAlpha', 0.7, ...
+            'EdgeColor', 'none', 'DisplayName', lblB, 'Normalization', 'probability');
         
         xlabel('Coefficient of Variation (IEI)');
         ylabel('Probability');
@@ -167,13 +168,13 @@ function fig = plot_iei_comparison(results, options)
     summary_text = {
         'INTER-EVENT INTERVAL SUMMARY';
         '';
-        sprintf('WT (n = %d IEIs, %d ROIs):', length(wt_ieis), wt_stats.num_rois_with_multiple_events);
+        sprintf([lblA ' (n = %d IEIs, %d ROIs):'], length(wt_ieis), wt_stats.num_rois_with_multiple_events);
         sprintf('  Mean IEI: %.3f ± %.3f s', mean(wt_ieis_plot), std(wt_ieis_plot));
         sprintf('  Median IEI: %.3f s', median(wt_ieis_plot));
         sprintf('  Mean CV: %.3f ± %.3f', mean(wt_cv_valid), std(wt_cv_valid));
         sprintf('  Range: %.3f - %.3f s', min(wt_ieis_plot), max(wt_ieis_plot));
         '';
-        sprintf('R213W (n = %d IEIs, %d ROIs):', length(mut_ieis), mut_stats.num_rois_with_multiple_events);
+        sprintf([lblB ' (n = %d IEIs, %d ROIs):'], length(mut_ieis), mut_stats.num_rois_with_multiple_events);
         sprintf('  Mean IEI: %.3f ± %.3f s', mean(mut_ieis_plot), std(mut_ieis_plot));
         sprintf('  Median IEI: %.3f s', median(mut_ieis_plot));
         sprintf('  Mean CV: %.3f ± %.3f', mean(mut_cv_valid), std(mut_cv_valid));
@@ -195,7 +196,7 @@ function fig = plot_iei_comparison(results, options)
     text(0.05, 0.95, summary_text, 'FontSize', 10, 'VerticalAlignment', 'top', ...
         'HorizontalAlignment', 'left', 'Units', 'normalized', 'FontName', 'FixedWidth');
     
-    sgtitle('Inter-Event Interval Comparison: WT vs R213W', 'FontSize', 16, 'FontWeight', 'bold');
+    sgtitle(['Inter-Event Interval Comparison: ' lblA ' vs ' lblB], 'FontSize', 16, 'FontWeight', 'bold');
     
     fprintf('  Created IEI comparison plot\n');
 end

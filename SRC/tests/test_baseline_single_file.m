@@ -44,7 +44,7 @@ fprintf('\nTesting baseline calculation...\n');
 
 % Time the entire process
 tic;
-results = main_pipeline(test_file, test_options);
+results = spont_pipeline(test_file, test_options);
 total_time = toc;
 
 %% === Display Results ===
@@ -149,7 +149,7 @@ fprintf('\n=== Next Steps ===\n');
 fprintf('1. Review the baseline validation plots\n');
 fprintf('2. Check sample traces for baseline quality\n');
 fprintf('3. Adjust parameters in tracenorm_config.m if needed\n');
-fprintf('4. Test on additional files using: results = main_pipeline(folder_path)\n');
+fprintf('4. Test on additional files using: results = spont_pipeline(folder_path)\n');
 fprintf('5. Use baseline data for downstream analysis\n');
 
 fprintf('\n=== Test Complete ===\n');

@@ -1,104 +1,128 @@
-function results = oneap_batch_analysis(folder_path, options)
+function results = oneap_batch_analysis(dataset, options)
     % ONEAP_BATCH_ANALYSIS - Batch analysis of 1AP evoked responses
     %
-    % Counterpart to integrated_batch_analysis_final but for single action
-    % potential data. Classifies files by genotype (WT / R213W), with a
-    % single-group fallback when only one genotype (or none) is present,
-    % processes every file through oneap_pipeline, aggregates per condition,
-    % runs WT-vs-R213W statistics when both are available, and creates the
-    % evoked-response figures + a per-ROI metrics table.
+    % Takes a dataset loaded by load_dataset_folder (data + Recordings.csv), so
+    % all timing - frame interval, frame count, stim frames - comes from the
+    % metadata. Every file is processed by oneap_pipeline, which analyses each
+    % trial separately; the resulting (ROI, trial) "units" are pooled per group
+    % (genotype x drug). Unit-level metrics (amplitude, kinetics, ...) are
+    % therefore over SUCCESSFUL trials, and per-ROI release probability across
+    % trials is reported alongside. Statistics compare genotypes within each
+    % drug condition, on per-coverslip aggregates.
     %
     % Inputs:
-    %   folder_path - folder containing raw-mean 1AP CSV files
-    %   options     - struct: verbose, createPlots, frame_rate, ...
+    %   dataset - struct from load_dataset_folder
+    %   options - struct: verbose, createPlots
     %
     % Output:
-    %   results - struct with .groups, .comparison, .plot_handles,
-    %             .oneap_metrics_table, .processing_info
+    %   results - struct with .groups, .comparisons, .plot_handles,
+    %             .oneap_metrics_table (one row per ROI x trial),
+    %             .oneap_roi_table (one row per ROI), .processing_info
 
     if nargin < 2, options = struct(); end
     if ~isfield(options, 'verbose'),     options.verbose = true; end
     if ~isfield(options, 'createPlots'), options.createPlots = true; end
+    if ~isstruct(dataset) || ~isfield(dataset, 'files')
+        error('oneap_batch_analysis:input', ...
+            'oneap_batch_analysis takes a dataset from load_dataset_folder.');
+    end
 
     config = local_config();
 
     fprintf('=== 1AP Evoked Response Batch Analysis ===\n');
-    fprintf('Folder: %s\n', folder_path);
+    fprintf('Folder: %s\n', dataset.folder);
 
-    %% Step 1: find + classify files
-    csv_files = list_data_files(folder_path);   % .csv / .xlsx / .xls
-    if isempty(csv_files)
-        error('No CSV/XLSX files found in folder: %s', folder_path);
+    %% Step 1: files + one shared time base
+    files = dataset.files;
+    if isempty(files)
+        error('oneap_batch_analysis:noFiles', 'The dataset has no loadable files.');
     end
-
-    file_paths = arrayfun(@(f) fullfile(f.folder, f.name), csv_files, 'UniformOutput', false);
-    % Group identity comes from the single config-driven parser (fail-loud on an
-    % unrecognised name), so no genotype logic is duplicated here.
-    genotypes  = cellfun(@(p) parse_group(p, config), file_paths, 'UniformOutput', false);
-
-    has_wt  = any(strcmp(genotypes, 'WT'));
-    has_mut = any(strcmp(genotypes, 'R213W'));
-
-    if has_wt && has_mut
-        group_names = {'WT', 'R213W'};
-        fprintf('  Mode: WT vs R213W comparison\n');
-    else
-        group_names = unique(genotypes, 'stable');
-        fprintf('  Mode: single/pooled group(s): %s\n', strjoin(group_names, ', '));
+    % Groups are pooled onto one time axis, so all files must share the frame
+    % interval. Differing intervals are a mixed folder, not something to average.
+    fi = arrayfun(@(f) f.meta.frame_interval_ms, files);
+    if (max(fi) - min(fi)) > config.metadata.interval_tol_frac * median(fi)
+        error('oneap_batch_analysis:mixedInterval', ...
+            'Files have different Frame_Interval_ms (%s); analyse them as separate folders.', ...
+            strjoin(unique(cellstr(num2str(fi(:), '%.4g'))), ', '));
     end
-
-    fprintf('  Found %d data files (%s)\n', numel(file_paths), ...
-        strjoin(arrayfun(@(g) sprintf('%s:%d', group_names{g}, ...
-        sum(strcmp(genotypes, group_names{g}))), 1:numel(group_names), 'UniformOutput', false), ', '));
+    pre_f  = round(config.oneAP.epoch_pre_ms  / median(fi));
+    post_f = round(config.oneAP.epoch_post_ms / median(fi));
+    config = apply_recording_timing(config, median(fi), pre_f + post_f + 1);
+    config.oneAP.stim_frame = pre_f + 1;            % stim index within each epoch
+    fprintf('  Frame interval %.4g ms (metadata) | epoch %d frames, stim at %d\n', ...
+        config.frame_dur_ms, config.expected_frames, config.oneAP.stim_frame);
 
     %% Step 2: process every file
     fprintf('\nProcessing files...\n');
-    nFiles = numel(file_paths);
+    nFiles = numel(files);
     fileResults = cell(nFiles, 1);
     tic;
     for i = 1:nFiles
         try
-            fileResults{i} = oneap_pipeline(file_paths{i}, struct('verbose', false), config);
+            fileResults{i} = oneap_pipeline(files(i), struct('verbose', false), config);
             fr = fileResults{i};
             qc = fr.oneap.qc_counts;
-            fprintf('  [%d/%d] %s (%s): %d ROIs, %d responders (%.0f%%)\n', ...
-                i, nFiles, fr.filename, fr.genotype, fr.numROIs, ...
-                fr.oneap.n_responders, 100 * fr.oneap.responder_fraction);
+            rs = fr.roi_summary;
+            fprintf('  [%d/%d] %s (%s, %s): %d ROIs x %d trials, %d/%d successful trials (%.0f%%), %d ROIs responded at least once\n', ...
+                i, nFiles, fr.filename, fr.genotype, fr.drug, fr.numROIs, fr.numTrials, ...
+                fr.oneap.n_responders, fr.numUnits, 100 * fr.oneap.responder_fraction, ...
+                sum(rs.n_success >= 1));
             fprintf('        gates: %d sync-peak resp, %d async-peak resp, %d subthreshold, %d noisy, %d excluded\n', ...
                 qc.responder_sync, qc.responder_async, qc.subthreshold, qc.noise_excluded, qc.excluded);
+            if ~isempty(fr.meta.flags)
+                fprintf('        Step1 flags: %s\n', strjoin(fr.meta.flags, ', '));
+            end
         catch ME
-            fprintf('  [%d/%d] FAILED %s: %s\n', i, nFiles, csv_files(i).name, ME.message);
+            fprintf('  [%d/%d] FAILED %s: %s\n', i, nFiles, files(i).name, ME.message);
             fileResults{i} = [];
         end
     end
     process_time = toc;
     fprintf('  Processing complete in %.2f s\n', process_time);
 
-    %% Step 3: aggregate per group
-    fprintf('\nAggregating by condition...\n');
+    %% Step 3: aggregate per group (genotype x drug)
+    fprintf('\nAggregating by genotype x drug...\n');
+    ok = ~cellfun(@isempty, fileResults(:)');
+    genotypes = {files.genotype};
+    drugs     = {files.drug};
+    [geno_list, drug_list] = genotype_drug_order(genotypes(ok), drugs(ok), config);
     groups = [];
-    for g = 1:numel(group_names)
-        gname = group_names{g};
-        mask = strcmp(genotypes(:)', gname) & ~cellfun(@isempty, fileResults(:)');
-        gd = aggregate_group(fileResults(mask), gname, color_for(gname, config));
-        gd.avg_fit = fit_group_double(gd, config);   % averaged double-exp decay
-        if isempty(groups)
-            groups = gd;
-        else
-            groups(g) = gd; %#ok<AGROW>
+    for d = 1:numel(drug_list)
+        for g = 1:numel(geno_list)
+            mask = ok & strcmp(genotypes, geno_list{g}) & strcmp(drugs, drug_list{d});
+            if ~any(mask), continue; end
+            name = sprintf('%s %s', geno_list{g}, drug_list{d});
+            gd = aggregate_group(fileResults(mask), name, ...
+                group_color(geno_list{g}, d, numel(drug_list), config));
+            gd.genotype = geno_list{g};
+            gd.drug     = drug_list{d};
+            gd.avg_fit  = fit_group_double(gd, config);   % averaged double-exp decay
+            if isempty(groups), groups = gd; else, groups(end+1) = gd; end %#ok<AGROW>
+            fprintf('  %s: %d files, %d coverslips, %d ROIs, %d/%d successful trials (%.0f%%)\n', ...
+                gd.name, gd.num_files, gd.num_coverslips, gd.n_rois, gd.n_responders, ...
+                gd.total_rois, 100 * gd.n_responders / max(gd.total_rois, 1));
         end
-        fprintf('  %s: %d files, %d coverslips, %d ROIs, %d responders (%.0f%%)\n', ...
-            gd.name, gd.num_files, gd.num_coverslips, gd.total_rois, gd.n_responders, ...
-            100 * gd.n_responders / max(gd.total_rois, 1));
     end
 
-    %% Step 4: statistics (WT vs R213W only)
-    comparison = struct();
-    if has_wt && has_mut
-        fprintf('\nStatistical comparison (WT vs R213W, Mann-Whitney U)...\n');
-        wt  = groups(strcmp({groups.name}, 'WT'));
-        mut = groups(strcmp({groups.name}, 'R213W'));
-        comparison = compare_groups(wt, mut);
+    %% Step 4: statistics - genotype pairs within each drug condition
+    comparisons = struct('group_a', {}, 'group_b', {}, 'drug', {}, 'stats', {});
+    for d = 1:numel(drug_list)
+        idx = find(strcmp({groups.drug}, drug_list{d}));
+        for a = 1:numel(idx)
+            for b = a+1:numel(idx)
+                ga = groups(idx(a)); gb = groups(idx(b));
+                fprintf('\n%s vs %s (Mann-Whitney U, per-coverslip means)...\n', ga.name, gb.name);
+                comparisons(end+1) = struct('group_a', ga.name, 'group_b', gb.name, ...
+                    'drug', drug_list{d}, 'stats', compare_groups(ga, gb)); %#ok<AGROW>
+            end
+        end
+    end
+    % The figures draw one p-value bar between groups 1 and 2, so they are only
+    % annotated when exactly those two groups exist; otherwise see comparisons.
+    if numel(groups) == 2 && numel(comparisons) == 1
+        comparison = comparisons(1).stats;
+    else
+        comparison = struct();
     end
 
     %% Step 5: plots
@@ -107,11 +131,12 @@ function results = oneap_batch_analysis(folder_path, options)
         fprintf('\nCreating 1AP figures...\n');
         plot_handles.average_traces = plot_oneap_average_traces(groups, config);
         plot_handles.amplitude      = plot_oneap_metric(groups, 'peak_amplitude', true, ...
-            'Evoked Peak Amplitude (\DeltaF/F)', 'Evoked Peak Amplitude', comparison, 'peak_amplitude');
+            'Evoked Peak Amplitude (\DeltaF/F)', 'Evoked Peak Amplitude (successful trials)', comparison, 'peak_amplitude');
         plot_handles.kinetics       = plot_oneap_kinetics(groups, comparison);
         plot_handles.auc_split      = plot_oneap_auc_split(groups, comparison);
         plot_handles.sync_async     = plot_oneap_sync_async(groups, config);
         plot_handles.responders     = plot_oneap_responders(groups, comparison);
+        plot_handles.release_prob   = plot_oneap_release_prob(groups, comparison);
         plot_handles.async_fraction = plot_oneap_async_fraction(groups, comparison, config);
         plot_handles.qc             = plot_oneap_qc(groups, config);
         plot_handles.montage        = plot_oneap_montage(groups, config);
@@ -119,31 +144,42 @@ function results = oneap_batch_analysis(folder_path, options)
         fprintf('  Figures created.\n');
     end
 
-    %% Step 6: per-ROI metrics table
+    %% Step 6: metrics tables
     oneap_metrics_table = build_metrics_table(groups);
+    oneap_roi_table     = build_roi_table(groups);
 
     %% Assemble results
     results = struct();
     results.dataType            = '1AP';
     results.groups              = groups;
+    results.comparisons         = comparisons;
     results.comparison          = comparison;
     results.plot_handles        = plot_handles;
     results.oneap_metrics_table = oneap_metrics_table;
-    results.processing_info     = struct('folder_path', folder_path, ...
+    results.oneap_roi_table     = oneap_roi_table;
+    results.processing_info     = struct('folder_path', dataset.folder, ...
+        'metadata_file', dataset.metadata_file, ...
         'process_time', process_time, 'timestamp', datetime('now'), ...
-        'frame_rate', config.frame_rate, 'stim_frame', config.oneAP.stim_frame);
+        'frame_interval_ms', config.frame_dur_ms, 'epoch_frames', config.expected_frames, ...
+        'epoch_stim_frame', config.oneAP.stim_frame);
 
-    print_summary(groups, comparison);
+    print_summary(groups, comparisons);
 end
 
 %% ======================================================================
 %% Aggregation / stats helpers
 %% ======================================================================
 function gd = aggregate_group(fileResults, name, color)
+    % Columns of every per-"ROI" array here are (ROI, trial) units from
+    % oneap_pipeline; unit_roi / unit_trial map them back. The roi_* arrays are
+    % one entry per physical ROI (release statistics across its trials).
     gd = struct();
     gd.name = name;
     gd.color = color;
     gd.num_files = numel(fileResults);
+    unit_roi = []; unit_trial = []; unit_flags = {};
+    roi_p_response = []; roi_potency = []; roi_efficacy = [];
+    roi_n_success = []; roi_n_valid = []; roi_coverslip = {}; roi_file = []; roi_index = [];
 
     dfof_all = [];
     peak_amplitude = []; time_to_peak_ms = []; auc = []; tau_ms = []; tau_r2 = [];
@@ -167,7 +203,20 @@ function gd = aggregate_group(fileResults, name, color)
         % Experimental unit = coverslip (Cs#). Multiple regions (c#) on one
         % coverslip are pseudoreplicates and must collapse to it before stats.
         csid = parse_coverslip_id(fr.filename);
-        coverslip_of_roi = [coverslip_of_roi, repmat({csid}, 1, fr.numROIs)]; %#ok<AGROW>
+        coverslip_of_roi = [coverslip_of_roi, repmat({csid}, 1, fr.numUnits)]; %#ok<AGROW>
+        unit_roi   = [unit_roi,   o.unit_roi];    %#ok<AGROW>
+        unit_trial = [unit_trial, o.unit_trial];  %#ok<AGROW>
+        unit_flags = [unit_flags, o.unit_flags];  %#ok<AGROW>
+
+        rs = fr.roi_summary;
+        roi_p_response = [roi_p_response, rs.p_response]; %#ok<AGROW>
+        roi_potency    = [roi_potency,    rs.potency];    %#ok<AGROW>
+        roi_efficacy   = [roi_efficacy,   rs.efficacy];   %#ok<AGROW>
+        roi_n_success  = [roi_n_success,  rs.n_success];  %#ok<AGROW>
+        roi_n_valid    = [roi_n_valid,    rs.n_valid];    %#ok<AGROW>
+        roi_coverslip  = [roi_coverslip,  repmat({csid}, 1, fr.numROIs)]; %#ok<AGROW>
+        roi_file       = [roi_file,       repmat(i, 1, fr.numROIs)];      %#ok<AGROW>
+        roi_index      = [roi_index,      1:fr.numROIs];                  %#ok<AGROW>
 
         peak_amplitude  = [peak_amplitude,  o.peak_amplitude];   %#ok<AGROW>
         time_to_peak_ms = [time_to_peak_ms, o.time_to_peak_ms];  %#ok<AGROW>
@@ -190,7 +239,7 @@ function gd = aggregate_group(fileResults, name, color)
         qc_category     = [qc_category,     o.qc_category];       %#ok<AGROW>
         crossed_upper   = [crossed_upper,   o.crossed_upper];     %#ok<AGROW>
         event_peak_times_ms = [event_peak_times_ms, o.event_peak_times_ms]; %#ok<AGROW>
-        file_of_roi     = [file_of_roi,     repmat(i, 1, fr.numROIs)]; %#ok<AGROW>
+        file_of_roi     = [file_of_roi,     repmat(i, 1, fr.numUnits)]; %#ok<AGROW>
 
         if isempty(temporal_hist_sum)
             temporal_hist_sum = sum(o.temporal_hist, 2);
@@ -206,7 +255,7 @@ function gd = aggregate_group(fileResults, name, color)
         if fr.numFrames == ref_frames
             dfof_all = [dfof_all, fr.dfof_data]; %#ok<AGROW>
         else
-            dfof_all = [dfof_all, nan(ref_frames, fr.numROIs)]; %#ok<AGROW>
+            dfof_all = [dfof_all, nan(ref_frames, fr.numUnits)]; %#ok<AGROW>
         end
     end
 
@@ -237,9 +286,41 @@ function gd = aggregate_group(fileResults, name, color)
     gd.coverslip_of_roi  = coverslip_of_roi;
     gd.temporal_hist_sum = temporal_hist_sum;
     gd.bin_centers_ms    = bin_centers_ms;
-    gd.total_rois        = numel(peak_amplitude);
-    gd.n_responders      = sum(gd.is_responder);
+    gd.unit_roi          = unit_roi;
+    gd.unit_trial        = unit_trial;
+    gd.unit_flags        = unit_flags;
+    gd.total_rois        = numel(peak_amplitude);   % (ROI, trial) units
+    gd.n_responders      = sum(gd.is_responder);    % successful trials
     gd.num_coverslips    = numel(unique(coverslip_of_roi));
+
+    gd.roi_p_response    = roi_p_response;
+    gd.roi_potency       = roi_potency;
+    gd.roi_efficacy      = roi_efficacy;
+    gd.roi_n_success     = roi_n_success;
+    gd.roi_n_valid       = roi_n_valid;
+    gd.roi_coverslip     = roi_coverslip;
+    gd.roi_file          = roi_file;
+    gd.roi_index         = roi_index;
+    gd.roi_active        = roi_n_success >= 1;       % responded on >= 1 trial
+    gd.n_rois            = numel(roi_p_response);
+end
+
+function vals = coverslip_means_roi(gd, field)
+    % Per-coverslip mean of a per-ROI release statistic over ACTIVE ROIs (>= 1
+    % successful trial). ROIs that never responded are not counted as release
+    % sites with P = 0: an ROI with no response on any trial may not be a
+    % functional synapse at all, and including them would mix "how many ROIs
+    % are synapses" into "how reliably does a synapse release".
+    cs   = gd.roi_coverslip;
+    base = gd.(field);
+    keep = isfinite(base) & gd.roi_active;
+    uniq = unique(cs, 'stable');
+    vals = nan(1, numel(uniq));
+    for i = 1:numel(uniq)
+        m = strcmp(cs, uniq{i}) & keep;
+        if any(m), vals(i) = mean(base(m)); end
+    end
+    vals = vals(isfinite(vals));
 end
 
 function vals = coverslip_means(gd, field, useResponders)
@@ -295,7 +376,7 @@ function fr = coverslip_async_frac(gd)
     fr = fr(isfinite(fr));
 end
 
-function comparison = compare_groups(wt, mut)
+function comparison = compare_groups(ga, gb)
     % Statistics are run on PER-COVERSLIP aggregates (one value per coverslip),
     % NOT on pooled ROIs. Pooling ROIs is pseudoreplication: ROIs within a
     % coverslip are not independent, so a pooled test reports an inflated n and
@@ -306,48 +387,60 @@ function comparison = compare_groups(wt, mut)
     % population - that needs >=3 animals/genotype with animal as the unit.
     comparison = struct('test_type', ...
         'Mann-Whitney U on per-coverslip means (n = coverslips)');
+    na = ga.name; nb = gb.name;
 
     metrics = {'peak_amplitude', 'time_to_peak_ms', 'auc', 'auc_sync', 'auc_async', 'tau_ms'};
     for m = 1:numel(metrics)
         f = metrics{m};
-        a = coverslip_means(wt,  f, true);   % one value per coverslip (responders)
-        b = coverslip_means(mut, f, true);
-        p = NaN;
-        if numel(a) >= 1 && numel(b) >= 1 && (numel(a) + numel(b)) >= 3
-            p = ranksum(a, b);
-        end
+        a = coverslip_means(ga, f, true);   % one value per coverslip (successful trials)
+        b = coverslip_means(gb, f, true);
+        p = ranksum_or_nan(a, b);
         comparison.(f) = p;
-        fprintf('  %-16s WT=%.4g (N=%d cs), R213W=%.4g (N=%d cs), p=%.4g\n', ...
-            f, safemean(a), numel(a), safemean(b), numel(b), p);
+        fprintf('  %-16s %s=%.4g (N=%d cs), %s=%.4g (N=%d cs), p=%.4g\n', ...
+            f, na, safemean(a), numel(a), nb, safemean(b), numel(b), p);
     end
 
-    % Responder fraction: per-coverslip fraction, compared across coverslips
-    % (replaces the ROI-pooled 2-proportion z-test, which was pseudoreplicated).
-    a = coverslip_resp_frac(wt);
-    b = coverslip_resp_frac(mut);
-    p = NaN;
-    if numel(a) >= 1 && numel(b) >= 1 && (numel(a) + numel(b)) >= 3
-        p = ranksum(a, b);
+    % Per-ROI release statistics across trials (active ROIs, per coverslip):
+    % P(response), potency (amplitude of successes), efficacy (failures = 0).
+    roi_metrics = {'roi_p_response', 'roi_potency', 'roi_efficacy'};
+    for m = 1:numel(roi_metrics)
+        f = roi_metrics{m};
+        a = coverslip_means_roi(ga, f);
+        b = coverslip_means_roi(gb, f);
+        p = ranksum_or_nan(a, b);
+        comparison.(f) = p;
+        fprintf('  %-16s %s=%.4g (N=%d cs), %s=%.4g (N=%d cs), p=%.4g\n', ...
+            f, na, safemean(a), numel(a), nb, safemean(b), numel(b), p);
     end
+
+    % Trial success rate: per-coverslip fraction of (ROI, trial) units that
+    % responded, compared across coverslips (not ROI-pooled: pseudoreplication).
+    a = coverslip_resp_frac(ga);
+    b = coverslip_resp_frac(gb);
+    p = ranksum_or_nan(a, b);
     comparison.responder_fraction_p = p;
     comparison.responder_fraction   = safemean(a) - safemean(b);
-    fprintf('  %-16s WT=%.1f%% (N=%d cs), R213W=%.1f%% (N=%d cs), p=%.4g\n', ...
-        'responder_frac', 100*safemean(a), numel(a), 100*safemean(b), numel(b), p);
+    fprintf('  %-16s %s=%.1f%% (N=%d cs), %s=%.1f%% (N=%d cs), p=%.4g\n', ...
+        'success_rate', na, 100*safemean(a), numel(a), nb, 100*safemean(b), numel(b), p);
 
     % Asynchronous-release fraction: per-coverslip async/(sync+async) events,
     % compared across coverslips. This is the direct test of the slow tail seen
     % in the averaged trace (and the post-stim PSTH), which the per-ROI tau / AUC
     % metrics do not capture.
-    a = coverslip_async_frac(wt);
-    b = coverslip_async_frac(mut);
+    a = coverslip_async_frac(ga);
+    b = coverslip_async_frac(gb);
+    p = ranksum_or_nan(a, b);
+    comparison.async_fraction_p = p;
+    comparison.async_fraction   = safemean(a) - safemean(b);
+    fprintf('  %-16s %s=%.1f%% (N=%d cs), %s=%.1f%% (N=%d cs), p=%.4g\n', ...
+        'async_frac', na, 100*safemean(a), numel(a), nb, 100*safemean(b), numel(b), p);
+end
+
+function p = ranksum_or_nan(a, b)
     p = NaN;
     if numel(a) >= 1 && numel(b) >= 1 && (numel(a) + numel(b)) >= 3
         p = ranksum(a, b);
     end
-    comparison.async_fraction_p = p;
-    comparison.async_fraction   = safemean(a) - safemean(b);
-    fprintf('  %-16s WT=%.1f%% (N=%d cs), R213W=%.1f%% (N=%d cs), p=%.4g\n', ...
-        'async_frac', 100*safemean(a), numel(a), 100*safemean(b), numel(b), p);
 end
 
 function v = responder_vals(gd, field)
@@ -606,12 +699,12 @@ function fig = plot_oneap_responders(groups, comparison)
         cjit = (rand(1, numel(cf)) - 0.5) * 0.25;
         scatter(g + cjit, cf, 45, groups(g).color, 'filled', ...
             'MarkerEdgeColor', 'k', 'LineWidth', 1);
-        labels{g} = sprintf('%s\n(%d/%d ROIs, N=%d cs)', groups(g).name, ...
+        labels{g} = sprintf('%s\n(%d/%d trials, N=%d cs)', groups(g).name, ...
             groups(g).n_responders, groups(g).total_rois, numel(cf));
     end
     set(gca, 'XTick', 1:nG, 'XTickLabel', labels);
-    ylabel('Responder fraction (%)');
-    title('Fraction of ROIs with validated synchronous response');
+    ylabel('Successful trials (%)');
+    title('Trial success rate (ROI x trial units with a validated evoked response)');
     grid on; box on; ylim([0 100]);
 
     if ~isempty(comparison) && isfield(comparison, 'responder_fraction_p') ...
@@ -622,6 +715,71 @@ function fig = plot_oneap_responders(groups, comparison)
         if p < 0.001, ptxt = 'p < 0.001 ***'; else, ptxt = sprintf('p = %.3f', p); end
         text(1.5, y + 1, ptxt, 'HorizontalAlignment', 'center', 'FontWeight', 'bold');
     end
+end
+
+function fig = plot_oneap_release_prob(groups, comparison)
+    % Per-ROI release statistics across trials, over ACTIVE ROIs (>= 1 success):
+    %   (1) distribution of P(response) = successes / valid trials
+    %   (2) P(response), (3) potency, (4) efficacy - per-coverslip SuperPlots
+    fig = figure('Name', 'OneAP Release Probability', 'Position', [140 90 1600 800]);
+    nG = numel(groups);
+
+    subplot(2,2,1); hold on;
+    labels = cell(1, nG);
+    maxT = max([1, arrayfun(@(g) max([g.roi_n_valid, 1]), groups)]);
+    for g = 1:nG
+        gd = groups(g);
+        v = gd.roi_p_response(gd.roi_active & isfinite(gd.roi_p_response));
+        labels{g} = sprintf('%s (%d active / %d ROIs)', gd.name, numel(v), gd.n_rois);
+        if isempty(v), continue; end
+        histogram(v, 'BinEdges', ((0:maxT+1) - 0.5) / maxT, ...   % centred on k/maxT
+            'Normalization', 'probability', 'DisplayStyle', 'stairs', ...
+            'EdgeColor', gd.color, 'LineWidth', 2);
+    end
+    xlim([0 1.05]); xlabel('P(response) per ROI'); ylabel('Fraction of active ROIs');
+    title('Per-ROI response probability across trials');
+    legend(labels, 'Location', 'northwest', 'Interpreter', 'none'); grid on; box on;
+
+    subplot(2,2,2);
+    plot_roi_box(gca, groups, 'roi_p_response', 'P(response)', ...
+        'Response probability (active ROIs)', comparison);
+    ylim([0 1.1]);
+    subplot(2,2,3);
+    plot_roi_box(gca, groups, 'roi_potency', '\DeltaF/F', ...
+        'Potency (mean amplitude of successes)', comparison);
+    subplot(2,2,4);
+    plot_roi_box(gca, groups, 'roi_efficacy', '\DeltaF/F', ...
+        'Efficacy (mean amplitude, failures = 0)', comparison);
+    sgtitle('1AP release reliability across trials', 'FontSize', 14, 'FontWeight', 'bold');
+end
+
+function plot_roi_box(ax, groups, field, ylab, ttl, comparison)
+    % SuperPlot of a per-ROI statistic: faint active-ROI cloud + per-coverslip
+    % means (the statistical units), as plot_group_box does for trial units.
+    axes(ax); hold on;
+    nG = numel(groups);
+    cs_vals = []; labels = cell(1, nG);
+    for g = 1:nG
+        gd = groups(g);
+        cm = coverslip_means_roi(gd, field);
+        draw_box(ax, g, cm, gd.color, 0.5);
+        v = gd.(field)(gd.roi_active);
+        v = v(isfinite(v));
+        if ~isempty(v)
+            scatter(g + (rand(1, numel(v)) - 0.5) * 0.3, v, 10, gd.color, ...
+                'filled', 'MarkerFaceAlpha', 0.18);
+        end
+        if ~isempty(cm)
+            scatter(g + (rand(1, numel(cm)) - 0.5) * 0.18, cm, 55, gd.color, ...
+                'filled', 'MarkerEdgeColor', 'k', 'LineWidth', 1);
+        end
+        cs_vals = [cs_vals, cm]; %#ok<AGROW>
+        labels{g} = sprintf('%s (N=%d cs, %d ROIs)', gd.name, numel(cm), numel(v));
+    end
+    set(ax, 'XTick', 1:nG, 'XTickLabel', labels, 'TickLabelInterpreter', 'none');
+    xlim([0.5, nG + 0.5]);
+    ylabel(ylab); title(ttl); grid on; box on;
+    annotate_pvalue(comparison, field, cs_vals);
 end
 
 function fig = plot_oneap_async_fraction(groups, comparison, config)
@@ -792,12 +950,13 @@ function figs = plot_oneap_montage(groups, config)
                 config.oneAP.sync_window_ms, config.oneAP.async_window_ms, tax);
             % Fitted mono-exponential decay (magenta) where a valid tau exists
             plot_tau_fit(gd, roi, stim_frame, frame_dur, nF_full, tax);
+            lbl = unit_label(gd, roi);
             if gd.is_responder(roi) && isfinite(gd.tau_ms(roi))
-                ttl = sprintf('ROI%d R \\tau=%.0fms', roi, gd.tau_ms(roi));
+                ttl = sprintf('%s R \\tau=%.0fms', lbl, gd.tau_ms(roi));
             elseif gd.is_responder(roi)
-                ttl = sprintf('ROI%d R', roi);
+                ttl = sprintf('%s R', lbl);
             else
-                ttl = sprintf('ROI%d -', roi);
+                ttl = sprintf('%s -', lbl);
             end
             title(ttl, 'FontSize', 8, 'Interpreter', 'tex');
             set(gca, 'FontSize', 7); grid on; box on;
@@ -873,7 +1032,7 @@ function figs = plot_oneap_marginal(groups, config)
                 config.oneAP.sync_window_ms, config.oneAP.async_window_ms, tax);
             plot_tau_fit(gd, roi, stim_frame, frame_dur, nF_full, tax);
             snr_roi = gd.peak_amplitude(roi) / gd.prestim_sd(roi);
-            title(sprintf('ROI%d SNR=%.1f', roi, snr_roi), ...
+            title(sprintf('%s SNR=%.1f', unit_label(gd, roi), snr_roi), ...
                 'FontSize', 8, 'Interpreter', 'tex');
             set(gca, 'FontSize', 7); grid on; box on;
             scroll_time_axis(gca, xwin);   % show stim window; drag to scroll x
@@ -884,6 +1043,11 @@ function figs = plot_oneap_marginal(groups, config)
             config.oneAP.upper_threshold_sigma, config.oneAP.lower_threshold_sigma, tax.unit), ...
             'FontSize', 12, 'FontWeight', 'bold', 'Interpreter', 'tex');
     end
+end
+
+function s = unit_label(gd, u)
+    % "F<file> ROI<n> T<trial>" for a (ROI, trial) unit column of the group.
+    s = sprintf('F%d ROI%d T%d', gd.file_of_roi(u), gd.unit_roi(u), gd.unit_trial(u));
 end
 
 function plot_tau_fit(gd, roi, stim_frame, frame_dur, nFrames, tax)
@@ -931,15 +1095,20 @@ end
 %% Output / utility
 %% ======================================================================
 function T = build_metrics_table(groups)
-    genotype = {}; filename = {}; coverslip = {}; roi = []; responder = [];
+    % One row per (ROI, trial) unit. step1_flags = that trial's Step1_Flags.
+    genotype = {}; drug = {}; filename = {}; coverslip = {}; roi = []; trial = [];
+    flags = {}; responder = [];
     peak_amp = []; ttp = []; auc = []; auc_s = []; auc_a = []; tau = []; tau_r2 = [];
     sync_c = []; async_c = []; tot_ev = []; pre_sd = [];
 
     for g = 1:numel(groups)
         gd = groups(g);
         n = gd.total_rois;
+        drug     = [drug;     repmat({gd.drug}, n, 1)]; %#ok<AGROW>
+        trial    = [trial;    gd.unit_trial(:)];        %#ok<AGROW>
+        flags    = [flags;    gd.unit_flags(:)];        %#ok<AGROW>
         for j = 1:n
-            genotype{end+1,1} = gd.name; %#ok<AGROW>
+            genotype{end+1,1} = gd.genotype; %#ok<AGROW>
             fidx = gd.file_of_roi(j);
             if fidx >= 1 && fidx <= numel(gd.filenames)
                 filename{end+1,1} = gd.filenames{fidx}; %#ok<AGROW>
@@ -952,7 +1121,7 @@ function T = build_metrics_table(groups)
                 coverslip{end+1,1} = ''; %#ok<AGROW>
             end
         end
-        roi       = [roi;       (1:n)'];                  %#ok<AGROW>
+        roi       = [roi;       gd.unit_roi(:)];          %#ok<AGROW>
         responder = [responder; gd.is_responder(:)];      %#ok<AGROW>
         peak_amp  = [peak_amp;  gd.peak_amplitude(:)];     %#ok<AGROW>
         ttp       = [ttp;       gd.time_to_peak_ms(:)];    %#ok<AGROW>
@@ -967,14 +1136,30 @@ function T = build_metrics_table(groups)
         pre_sd    = [pre_sd;    gd.prestim_sd(:)];         %#ok<AGROW>
     end
 
-    T = table(genotype, filename, coverslip, roi, logical(responder), peak_amp, ttp, auc, ...
-        auc_s, auc_a, tau, tau_r2, sync_c, async_c, tot_ev, pre_sd, ...
-        'VariableNames', {'genotype', 'filename', 'coverslip', 'roi', 'is_responder', ...
+    T = table(genotype, drug, filename, coverslip, roi, trial, logical(responder), peak_amp, ttp, auc, ...
+        auc_s, auc_a, tau, tau_r2, sync_c, async_c, tot_ev, pre_sd, flags, ...
+        'VariableNames', {'genotype', 'drug', 'filename', 'coverslip', 'roi', 'trial', 'is_responder', ...
         'peak_amplitude', 'time_to_peak_ms', 'auc', 'auc_sync', 'auc_async', 'tau_ms', 'tau_r2', ...
-        'sync_count', 'async_count', 'total_events', 'prestim_sd'});
+        'sync_count', 'async_count', 'total_events', 'prestim_sd', 'step1_flags'});
 end
 
-function print_summary(groups, comparison)
+function T = build_roi_table(groups)
+    % One row per physical ROI: release statistics across its trials.
+    parts = cell(numel(groups), 1);
+    for g = 1:numel(groups)
+        gd = groups(g);
+        n = gd.n_rois;
+        parts{g} = table(repmat({gd.genotype}, n, 1), repmat({gd.drug}, n, 1), ...
+            gd.filenames(gd.roi_file)', gd.roi_coverslip(:), gd.roi_index(:), ...
+            gd.roi_n_valid(:), gd.roi_n_success(:), gd.roi_p_response(:), ...
+            gd.roi_potency(:), gd.roi_efficacy(:), ...
+            'VariableNames', {'genotype', 'drug', 'filename', 'coverslip', 'roi', ...
+            'n_valid_trials', 'n_success', 'p_response', 'potency', 'efficacy'});
+    end
+    T = vertcat(parts{:});
+end
+
+function print_summary(groups, comparisons)
     fprintf('\n=== 1AP SUMMARY ===\n');
     fprintf('(Statistical unit = coverslip. ROIs and regions/files within a\n');
     fprintf(' coverslip are pseudoreplicates. With 1 animal/genotype these are\n');
@@ -983,10 +1168,14 @@ function print_summary(groups, comparison)
         gd = groups(g);
         ra = responder_vals(gd, 'peak_amplitude');
         rt = responder_vals(gd, 'tau_ms');
-        fprintf('%s: %d files, %d coverslips, %d ROIs, %d responders (%.0f%%)\n', ...
-            gd.name, gd.num_files, gd.num_coverslips, gd.total_rois, gd.n_responders, ...
-            100*gd.n_responders/max(gd.total_rois,1));
-        fprintf('   peak %.4f dF/F | time-to-peak %.1f ms | per-ROI tau %.0f ms\n', ...
+        act = gd.roi_active;
+        fprintf('%s: %d files, %d coverslips, %d ROIs (%d active), %d/%d successful trials (%.0f%%)\n', ...
+            gd.name, gd.num_files, gd.num_coverslips, gd.n_rois, sum(act), gd.n_responders, ...
+            gd.total_rois, 100*gd.n_responders/max(gd.total_rois,1));
+        fprintf('   active ROIs: P(response) %.2f | potency %.4f dF/F | efficacy %.4f dF/F\n', ...
+            safemean(gd.roi_p_response(act)), safemean(gd.roi_potency(act)), ...
+            safemean(gd.roi_efficacy(act)));
+        fprintf('   successful trials: peak %.4f dF/F | time-to-peak %.1f ms | tau %.0f ms\n', ...
             safemean(ra), safemean(responder_vals(gd,'time_to_peak_ms')), safemean(rt));
         af = gd.avg_fit;
         if isfield(af, 'tau_fast') && isfinite(af.tau_fast)
@@ -997,22 +1186,15 @@ function print_summary(groups, comparison)
         fprintf('   QC gates: %d sync-peak resp | %d async-peak resp | %d subthreshold | %d noisy | %d excluded\n', ...
             sum(c==1), sum(c==2), sum(c==3), sum(c==4), sum(c==0));
     end
-    if ~isempty(comparison) && isfield(comparison, 'peak_amplitude')
-        fprintf('Comparison p-values: peak=%.3g, ttp=%.3g, auc=%.3g, tau=%.3g, resp_frac=%.3g, async_frac=%.3g\n', ...
-            comparison.peak_amplitude, comparison.time_to_peak_ms, comparison.auc, ...
-            comparison.tau_ms, comparison.responder_fraction_p, comparison.async_fraction_p);
+    for k = 1:numel(comparisons)
+        c = comparisons(k).stats;
+        fprintf(['%s vs %s p-values: P(resp)=%.3g, potency=%.3g, efficacy=%.3g, ' ...
+            'peak=%.3g, ttp=%.3g, auc=%.3g, tau=%.3g, success=%.3g, async_frac=%.3g\n'], ...
+            comparisons(k).group_a, comparisons(k).group_b, c.roi_p_response, ...
+            c.roi_potency, c.roi_efficacy, c.peak_amplitude, c.time_to_peak_ms, ...
+            c.auc, c.tau_ms, c.responder_fraction_p, c.async_fraction_p);
     end
     fprintf('===================\n');
-end
-
-function c = color_for(name, config)
-    % Group colour from the single source of truth (config.groups).
-    idx = find(strcmp({config.groups.name}, name), 1);
-    if isempty(idx)
-        c = [0.4 0.4 0.4];
-    else
-        c = config.groups(idx).color;
-    end
 end
 
 function config = local_config()

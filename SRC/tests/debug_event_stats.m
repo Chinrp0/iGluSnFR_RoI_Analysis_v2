@@ -148,13 +148,13 @@ if has_real_events
     fprintf('✅ Updated baseline_plotter should work with your data\n');
     fprintf('\nRecommendations:\n');
     fprintf('1. Replace your baseline_plotter.m with the updated version\n');
-    fprintf('2. Ensure your main_pipeline passes event_stats to the plotter\n');
-    fprintf('3. Run main_pipeline again to see proper event marking\n');
+    fprintf('2. Ensure your spont_pipeline passes event_stats to the plotter\n');
+    fprintf('3. Run spont_pipeline again to see proper event marking\n');
 else
     fprintf('❌ Event detection system not accessible\n');
     fprintf('\nNext steps:\n');
     fprintf('1. Check if schmitt_event_detector.m exists in your codebase\n');
-    fprintf('2. Make sure it''s being called in your main_pipeline\n');
+    fprintf('2. Make sure it''s being called in your spont_pipeline\n');
     fprintf('3. The updated baseline_plotter will fall back to basic plots without events\n');
 end
 

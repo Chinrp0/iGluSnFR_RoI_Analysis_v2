@@ -24,7 +24,7 @@ fprintf('\nTesting core pipeline...\n');
 
 tic;
 try
-    results = main_pipeline(test_file, test_options);
+    results = spont_pipeline(test_file, test_options);
     total_time = toc;
     
     fprintf('\n✅ SUCCESS: Core pipeline completed without plotting\n');

@@ -1,62 +1,93 @@
 function config = tracenorm_config()
     % TRACENORM_CONFIG - SINGLE SOURCE OF TRUTH for the iGluSnFR analysis pipeline
     %
-    % Everything time-related is derived from ONE acquisition knob, exposure_ms
-    % (milliseconds per frame). Frame rate, all ms<->frame conversions, rolling
-    % windows and figure time axes follow from it. Nothing stores Hz or a frame
-    % count independently, so there is no hidden constant that can shadow this.
+    % RECORDING TIMING COMES FROM THE METADATA, NOT FROM HERE. Every data folder
+    % carries a Recordings.csv (written by the Fiji macro) giving, per file, the
+    % number of frames, the frame interval (ms) and the refined stimulus (TTL)
+    % frames. load_dataset_folder() reads it and apply_recording_timing() writes
+    % those values into the config per file/run, so the frame rate, frame count
+    % and stim frame are never hardcoded for 1AP. All analysis windows below are
+    % in MILLISECONDS and converted to frames with the metadata frame interval.
     %
-    % >>> EDIT THESE TWO VALUES PER RUN (a folder = one paradigm) <<<
-    %   exposure_ms : 1AP / 2AP (PPF) = 5 ms   |   spontaneous = 25 ms
+    % >>> EDIT PER RUN <<<
     %   dataType    : '1AP' | '2AP' | 'Spont'
-    % These are set by hand for each run; the pipeline never auto-detects them.
+    % The data folder is NOT set here: load_dataset / run_pipeline ask for
+    % it with a folder dialog that opens at data_root (select_data_folder).
     %
-    % Groups (WT vs R213W, or future proteins) are parsed from the filename using
-    % the patterns in config.groups via parse_group(). Swapping proteins is a
-    % one-line edit here and nowhere else.
+    % Groups are genotype x drug. Genotype is parsed from the filename with the
+    % patterns in config.groups (parse_group); drug from the "+drug" token after
+    % the paradigm (parse_drug), e.g. "..._5AP+ttx-01" -> ttx, none -> control.
 
     config = struct();
 
     %% ======================================================================
-    %% ACQUISITION - the single time knob + paradigm selector (EDIT PER RUN)
+    %% ACQUISITION - paradigm selector (EDIT PER RUN) + folder-dialog start
     %% ======================================================================
-    config.exposure_ms = 5;      % ms per frame. 1AP/2AP = 5 ms; spont = 25 ms.
-    config.dataType    = '2AP';  % '1AP' | '2AP' | 'Spont'
+    config.dataType    = '1AP';  % '1AP' | '2AP' | 'Spont'
 
-    % Data folder for THIS run (the paradigm's raw-mean folder). Edit per run,
-    % together with dataType/exposure above. run_pipeline_fixed reads this.
-    %config.folder_path = 'E:\Data\GluSnFR\Ms\2025-06-17_Ms-Hipp_DIV13_Doc2b_pilot_resave\iglu3fast_NGR\1AP\GPU_Processed_Images_1AP\5_raw_mean'; 
-    config.folder_path = 'E:\Data\GluSnFR\Ms\2025-06-17_Ms-Hipp_DIV13_Doc2b_pilot_resave\iglu3fast_NGR\PPF\PPF_2026-06-30--12\E_raw_mean';
-    %config.folder_path = 'E:\Data\GluSnFR\Ms\2025-06-17_Ms-Hipp_DIV13_Doc2b_pilot_resave\iglusnfr4f_NGR\1AP\1AP_2026-07-07--1\E_RoI_Raw-Mean';
-    % 1AP:   E:\...\iglu3fast_NGR\1AP\GPU_Processed_Images_1AP\5_raw_mean
-    % Spont: E:\...\iglusnfr4f_NGR\Spont\<run>\E_raw_mean
+    % Where the folder dialog opens (falls back to the current folder if this
+    % drive/path is not available on this PC).
+    config.data_root   = 'E:\Data\GluSnFR\Ms\';
 
-    % --- Everything below is DERIVED from exposure_ms (do not hardcode Hz) ---
+    % LEGACY exposure, used ONLY by the 2AP and Spont paths, which have not been
+    % moved onto Recordings.csv yet. The 1AP path ignores it: apply_recording_timing
+    % overwrites exposure_ms / frame_rate / frame_dur_ms from the metadata.
+    config.exposure_ms = 5;      % ms per frame (2AP = 5 ms; spont = 25 ms)
+
+    % --- Derived from exposure_ms (replaced per run by apply_recording_timing) ---
     config.frame_rate     = 1000 / config.exposure_ms;  % Hz, derived
     config.frame_dur_ms   = config.exposure_ms;         % ms/frame, alias for readability
 
     %% ======================================================================
-    %% GROUPS - config-driven, fail-loud parsing (see io/parse_group.m)
+    %% METADATA (Recordings.csv, see io/read_recordings_metadata.m)
     %% ======================================================================
-    % name    : label used in legends/titles/aggregation
-    % pattern : case-insensitive regexp matched against the filename stem
-    % color   : RGB for all figures for this group
-    % To add/swap a protein, add/edit one row here. A filename that matches no
-    % pattern (or more than one) makes parse_group error rather than mislabel.
-    config.groups = struct( ...
-        'name',    {'WT',            'R213W'}, ...
-        'pattern', {'WT',            'R213W'}, ...
-        'color',   {[0.2 0.6 1.0],   [1.0 0.4 0.2]});
+    config.metadata = struct();
+    config.metadata.filename = 'Recordings.csv';   % matched case-insensitively
+    % Frames per file must equal N_Frames, and ROI columns must equal N_ROIs.
+    % A file that disagrees is skipped (with a warning) rather than analysed on
+    % a timing it doesn't have.
+    config.metadata.interval_tol_frac = 0.001;     % Files pooled in one run must
+                                                   % share Frame_Interval_ms to
+                                                   % within this fraction.
 
     %% ======================================================================
-    %% 1AP (single evoked action potential)
+    %% GROUPS - config-driven, fail-loud parsing (see io/parse_group.m)
+    %% ======================================================================
+    % name    : genotype label used in legends/titles/aggregation
+    % pattern : case-insensitive regexp matched against the filename stem
+    % color   : RGB for all figures for this genotype (drugs are shades of it)
+    % Patterns must be mutually exclusive: "Doc2b-WT" must NOT also match plain
+    % "WT", so the plain genotypes only match as a whole "_WT_" token.
+    %   CP_Snfr4_WT_Cs2-c1_5AP-02            -> WT
+    %   CP_Snfr4_Doc2b-WT_10ms_Cs1-c1_5AP-01 -> Doc2b-WT
+    % A filename that matches no pattern (or more than one) makes parse_group
+    % error rather than mislabel.
+    config.groups = struct( ...
+        'name',    {'WT',              'Doc2b-WT',      'Doc2b-R213W',      'R213W'}, ...
+        'pattern', {'(^|_)WT(_|$)',    'Doc2b[-_]WT',   'Doc2b[-_]R213W',   '(^|_)R213W(_|$)'}, ...
+        'color',   {[0.3 0.3 0.3],     [0.2 0.6 1.0],   [1.0 0.4 0.2],      [0.8 0.2 0.6]});
+
+    % Drug conditions (perfusion). parse_drug returns the "+token" after the
+    % paradigm in lower case, or control_label when there is none. drug_order
+    % sets the plotting order; drugs not listed here are appended after it.
+    config.drugs = struct();
+    config.drugs.control_label = 'control';
+    config.drugs.order         = {'control', 'egta', 'ttx'};
+
+    %% ======================================================================
+    %% 1AP (single evoked action potential, one or more trials per file)
     %% ======================================================================
     % All windows are in MILLISECONDS relative to stimulus onset and converted to
-    % frames at run time via exposure_ms. Only stim_frame / expected_frames are in
-    % frames because they are properties of the specific recording, not the rate.
+    % frames with the metadata frame interval. The stim frames themselves come
+    % from Recordings.csv (Stim_Frames_Refined, one per trial). Each trial is cut
+    % into its own epoch [stim - epoch_pre_ms, stim + epoch_post_ms] (clipped so
+    % it never reaches into the neighbouring trial) and analysed on its own, so a
+    % failed trial at a low-release-probability site stays a failure instead of
+    % being averaged away. oneAP.stim_frame is set at run time to the stim index
+    % WITHIN the epoch; it is not a property of the recording.
     config.oneAP = struct();
-    config.oneAP.expected_frames    = 600;      % Frames per 1AP trace (this dataset)
-    config.oneAP.stim_frame         = 266;      % Frame of stimulus onset (data-confirmed)
+    config.oneAP.epoch_pre_ms       = 1000;     % Pre-stim baseline kept per trial epoch
+    config.oneAP.epoch_post_ms      = 1500;     % Post-stim trace kept per trial epoch
     config.oneAP.sync_window_ms     = [0, 15];  % Synchronous release window (timing label)
     config.oneAP.async_window_ms    = [15, 250];% Asynchronous release window (timing label)
                                                 % Evoked iGlu peak lands ~15-35 ms post-stim
@@ -130,8 +161,9 @@ function config = tracenorm_config()
     %% ======================================================================
     %% Mode-dependent frame count / duration (DERIVED, never a hidden constant)
     %% ======================================================================
+    % 1AP: NaN until apply_recording_timing sets it from Recordings.csv N_Frames.
     switch upper(config.dataType)
-        case '1AP',   config.expected_frames = config.oneAP.expected_frames;
+        case '1AP',   config.expected_frames = NaN;
         case '2AP',   config.expected_frames = config.twoAP.expected_frames;
         case 'SPONT', config.expected_frames = 1200;   % 30 s at 25 ms/frame (this dataset)
         otherwise,    error('tracenorm_config:dataType', ...
@@ -236,7 +268,8 @@ function config = tracenorm_config()
     % their own natural domain (event / peak time).
     %   e.g. [0 600] = whole trace   |   [200 500] = zoom around the stim
     config.visualization.x_axis.range_frames         = [];   % avg-trace (wide time figure)
-    config.visualization.x_axis.montage_range_frames = [150, 400];   % per-panel ROI montage window
+    % For 1AP these are frames WITHIN a trial epoch (stim at epoch_pre_ms).
+    config.visualization.x_axis.montage_range_frames = [];   % per-panel ROI montage window
 
     %% ======================================================================
     %% Output
@@ -252,13 +285,19 @@ function config = tracenorm_config()
     %% ======================================================================
     fprintf('\n=== Configuration Loaded ===\n');
     fprintf('Analysis Mode: %s\n', config.dataType);
-    fprintf('Exposure: %.3g ms/frame  ->  Frame Rate: %.4g Hz\n', ...
-        config.exposure_ms, config.frame_rate);
-    fprintf('Recording: %d frames = %.2f s\n', config.expected_frames, config.recording_duration_s);
-    fprintf('Groups: %s\n', strjoin({config.groups.name}, ', '));
     if strcmpi(config.dataType, '1AP')
-        fprintf('1AP Stim Frame: %d (%.0f ms), Sync: %d-%d ms, Async: %d-%d ms, Bin: %d ms\n', ...
-            config.oneAP.stim_frame, (config.oneAP.stim_frame - 1) * config.frame_dur_ms, ...
+        fprintf('Timing: per file from %s (frames, frame interval, stim frames)\n', ...
+            config.metadata.filename);
+    else
+        fprintf('Exposure: %.3g ms/frame  ->  Frame Rate: %.4g Hz (legacy config value)\n', ...
+            config.exposure_ms, config.frame_rate);
+        fprintf('Recording: %d frames = %.2f s\n', config.expected_frames, config.recording_duration_s);
+    end
+    fprintf('Genotypes: %s | Drugs: %s\n', strjoin({config.groups.name}, ', '), ...
+        strjoin(config.drugs.order, ', '));
+    if strcmpi(config.dataType, '1AP')
+        fprintf('1AP epochs: -%g..+%g ms per trial, Sync: %d-%d ms, Async: %d-%d ms, Bin: %d ms\n', ...
+            config.oneAP.epoch_pre_ms, config.oneAP.epoch_post_ms, ...
             config.oneAP.sync_window_ms(1), config.oneAP.sync_window_ms(2), ...
             config.oneAP.async_window_ms(1), config.oneAP.async_window_ms(2), ...
             config.oneAP.bin_size_ms);

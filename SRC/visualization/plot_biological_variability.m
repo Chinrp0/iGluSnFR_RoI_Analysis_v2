@@ -1,9 +1,10 @@
 function fig = plot_biological_variability(results, options)
+    [lblA, lblB, colA, colB] = spont_group_labels(results);   % group labels/colours
     % PLOT_BIOLOGICAL_VARIABILITY - Shows variability across biological replicates
     % Violin plots, individual data points, and coefficient of variation
     %
     % Args:
-    %   results - Output from integrated_batch_analysis_final()
+    %   results - Output from spont_batch_analysis()
     %   options - Optional struct with plotting preferences
     
     if nargin < 2
@@ -19,32 +20,32 @@ function fig = plot_biological_variability(results, options)
         results.processing_info.mut_files);
     
     % FIXED: Use length of field array, not struct itself
-    fprintf('  WT: %d files\n', length(wt_metrics.mean_frequency));
-    fprintf('  R213W: %d files\n', length(mut_metrics.mean_frequency));
+    fprintf(['  ' lblA ': %d files\n'], length(wt_metrics.mean_frequency));
+    fprintf(['  ' lblB ': %d files\n'], length(mut_metrics.mean_frequency));
     
     %% Create figure
-    fig = figure('Name', 'Biological Variability Analysis: WT vs R213W', ...
+    fig = figure('Name', ['Biological Variability Analysis: ' lblA ' vs ' lblB], ...
         'Position', [100, 100, 1400, 1000]);
     
     %% Subplot 1: Mean Event Frequency per File
     subplot(2, 3, 1);
     plot_metric_comparison(wt_metrics.mean_frequency, mut_metrics.mean_frequency, ...
-        'WT', 'R213W', 'Mean Event Frequency (Hz)', [0.2, 0.6, 1.0], [1.0, 0.4, 0.2]);
+        lblA, lblB, 'Mean Event Frequency (Hz)', colA, colB);
     
     %% Subplot 2: Mean Event Amplitude per File
     subplot(2, 3, 2);
     plot_metric_comparison(wt_metrics.mean_amplitude, mut_metrics.mean_amplitude, ...
-        'WT', 'R213W', 'Mean Event Amplitude (dF/F)', [0.2, 0.6, 1.0], [1.0, 0.4, 0.2]);
+        lblA, lblB, 'Mean Event Amplitude (dF/F)', colA, colB);
     
     %% Subplot 3: Active ROI Fraction per File
     subplot(2, 3, 3);
     plot_metric_comparison(wt_metrics.active_roi_fraction * 100, mut_metrics.active_roi_fraction * 100, ...
-        'WT', 'R213W', 'Active ROI Fraction (%)', [0.2, 0.6, 1.0], [1.0, 0.4, 0.2]);
+        lblA, lblB, 'Active ROI Fraction (%)', colA, colB);
     
     %% Subplot 4: Total Events per File
     subplot(2, 3, 4);
     plot_metric_comparison(wt_metrics.total_events, mut_metrics.total_events, ...
-        'WT', 'R213W', 'Total Events', [0.2, 0.6, 1.0], [1.0, 0.4, 0.2]);
+        lblA, lblB, 'Total Events', colA, colB);
     
     %% Subplot 5: Events per Active ROI
     subplot(2, 3, 5);
@@ -52,7 +53,7 @@ function fig = plot_biological_variability(results, options)
     mut_events_per_active = mut_metrics.total_events ./ mut_metrics.active_rois;
     
     plot_metric_comparison(wt_events_per_active, mut_events_per_active, ...
-        'WT', 'R213W', 'Events per Active ROI', [0.2, 0.6, 1.0], [1.0, 0.4, 0.2]);
+        lblA, lblB, 'Events per Active ROI', colA, colB);
     
     %% Subplot 6: Coefficient of Variation Summary
     subplot(2, 3, 6); axis off;
@@ -70,20 +71,20 @@ function fig = plot_biological_variability(results, options)
         '(Coefficient of Variation)';
         '';
         'Event Frequency:';
-        sprintf('  WT: %.3f', cv_wt_freq);
-        sprintf('  R213W: %.3f', cv_mut_freq);
+        sprintf(['  ' lblA ': %.3f'], cv_wt_freq);
+        sprintf(['  ' lblB ': %.3f'], cv_mut_freq);
         '';
         'Event Amplitude:';
-        sprintf('  WT: %.3f', cv_wt_amp);
-        sprintf('  R213W: %.3f', cv_mut_amp);
+        sprintf(['  ' lblA ': %.3f'], cv_wt_amp);
+        sprintf(['  ' lblB ': %.3f'], cv_mut_amp);
         '';
         'Active ROI Fraction:';
-        sprintf('  WT: %.3f', cv_wt_active);
-        sprintf('  R213W: %.3f', cv_mut_active);
+        sprintf(['  ' lblA ': %.3f'], cv_wt_active);
+        sprintf(['  ' lblB ': %.3f'], cv_mut_active);
         '';
         'Sample Sizes:';
-        sprintf('  WT: %d files', length(wt_metrics.mean_frequency));
-        sprintf('  R213W: %d files', length(mut_metrics.mean_frequency));
+        sprintf(['  ' lblA ': %d files'], length(wt_metrics.mean_frequency));
+        sprintf(['  ' lblB ': %d files'], length(mut_metrics.mean_frequency));
         '';
         'NOTE:';
         'Lower CV = more consistent';
@@ -93,7 +94,7 @@ function fig = plot_biological_variability(results, options)
     text(0.05, 0.95, summary_text, 'FontSize', 10, 'VerticalAlignment', 'top', ...
         'HorizontalAlignment', 'left', 'Units', 'normalized', 'FontName', 'FixedWidth');
     
-    sgtitle('Biological Variability Analysis: WT vs R213W', 'FontSize', 16, 'FontWeight', 'bold');
+    sgtitle(['Biological Variability Analysis: ' lblA ' vs ' lblB], 'FontSize', 16, 'FontWeight', 'bold');
     
     fprintf('  Created biological variability analysis\n');
 end
