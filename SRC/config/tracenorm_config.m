@@ -90,10 +90,16 @@ function config = tracenorm_config()
     config.twoAP.isi_pattern        = 'PPF[\s_\-]*0*(\d+)\s*ms';  % -> ISI in ms from filename
     config.twoAP.peak_search_ms     = 40;       % Search [0, this] ms after each stim for that pulse's peak
                                                 % (capped at the ISI for pulse 1 so it can't reach pulse 2).
-    config.twoAP.auc_window_ms      = 40;       % AUC PPR: integrate dF/F over [0, this] ms after each stim.
-                                                % Both pulses use the SAME window = min(this, ISI) so A1/A2
-                                                % are comparable. A1 above pre-stim1 baseline, A2 above the
-                                                % local pre-stim2 residual (same baselines as the peak methods).
+    config.twoAP.auc_post_ms        = 250;      % AUC = TOTAL CHARGE over ONE window that encompasses BOTH
+                                                % pulses: [stim1, stim2 + this]. A single pre-stim1 baseline
+                                                % is used throughout (no per-pulse residual), so the metric is
+                                                % the total glutamate charge of the paired response (dF/F*ms),
+                                                % NOT a ratio. 250 ms matches the 1AP auc window and captures
+                                                % the full iGluSnFR3fast decay after pulse 2 while staying
+                                                % inside the 600-frame trace at the longest ISI (stim2~=466 ->
+                                                % +50 frames = 516). NB the window length = ISI + this, so it
+                                                % grows with ISI by construction: raw charge is ISI-dependent
+                                                % (interpret cross-ISI accordingly; no normalization applied).
     config.twoAP.montage_pre_ms     = 250;      % Montage x-window: ms of trace shown BEFORE stim1 (to judge
     config.twoAP.montage_post_ms    = 300;      % baseline/noise) and AFTER stim2 (to see the full decay).
     config.twoAP.sync_latency_ms    = 10;       % "Sync time-lock" PPR: read BOTH pulses at this fixed
@@ -102,7 +108,7 @@ function config = tracenorm_config()
     config.twoAP.baseline_guard_ms  = 0;        % Time before stim1 dropped from baseline
     config.twoAP.tau_peak_window_ms = 50;       % Decay-onset peak window (post-stim2)
     config.twoAP.tau_min_r2         = 0.5;
-    config.twoAP.upper_threshold_sigma  = 3.0;  % Responder threshold (peak must clear this)
+    config.twoAP.upper_threshold_sigma  = 3.5;  % Responder threshold (peak must clear this)
     config.twoAP.lower_threshold_sigma  = 1.5;  % Schmitt decay threshold (hysteresis)
     config.twoAP.min_frames_above_lower = 2;    % Schmitt validation (SAME as 1AP): after the peak
                                                 % clears the UPPER threshold, the run of frames >= the
@@ -110,6 +116,16 @@ function config = tracenorm_config()
                                                 % transients that clear the upper for one frame, rejects
                                                 % single-frame noise spikes.
     config.twoAP.max_noise_sd           = 0.02;
+    config.twoAP.min_peak_distance_ms   = 10;   % findpeaks min spacing (SAME as 1AP). A pulse peak must
+                                                % be a genuine LOCAL MAXIMUM >= upper (via findpeaks),
+                                                % not just the window max, so a monotonic noise ramp no
+                                                % longer counts as a response.
+    config.twoAP.baseline_excursion_pct = 99;   % Noise-ceiling QC: the pulse-1 peak must exceed the
+    config.twoAP.peak_over_baseline_k   = 1.0;  % k * (this percentile of pre-stim1 excursions above
+                                                % baseline). Rejects ROIs whose "response" is no bigger
+                                                % than their own largest baseline swing (uniform-noise
+                                                % ROIs that clear 3-sigma by chance). k=1 => peak must beat
+                                                % its 99th-pct baseline excursion. Set k=0 to disable.
 
     %% ======================================================================
     %% Mode-dependent frame count / duration (DERIVED, never a hidden constant)
@@ -220,7 +236,7 @@ function config = tracenorm_config()
     % their own natural domain (event / peak time).
     %   e.g. [0 600] = whole trace   |   [200 500] = zoom around the stim
     config.visualization.x_axis.range_frames         = [];   % avg-trace (wide time figure)
-    config.visualization.x_axis.montage_range_frames = [100, 500];   % per-panel ROI montage window
+    config.visualization.x_axis.montage_range_frames = [150, 400];   % per-panel ROI montage window
 
     %% ======================================================================
     %% Output

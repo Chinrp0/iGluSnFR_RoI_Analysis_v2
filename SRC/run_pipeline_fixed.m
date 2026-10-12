@@ -54,8 +54,10 @@ fprintf('\n=== Analysis complete ===\n');
 fprintf('Open figures: %d\n', numel(findall(0, 'Type', 'figure')));
 
 %% --- Save all open figures -------------------------------------------
-output_dir = make_output_dir(folder_path);
-save_all_figures(output_dir);
+output_dir = make_figures_dir(folder_path);
+fprintf('Created output directory:\n  %s\n', output_dir);
+n_saved = save_open_figures(output_dir);
+fprintf('Saved %d figures.\n', n_saved);
 
 %% --- Export per-ROI metrics table -------------------------------------
 if strcmpi(cfg.dataType, '1AP') && isfield(results, 'oneap_metrics_table')
@@ -81,58 +83,3 @@ fprintf('\n=== PIPELINE COMPLETE ===\n');
 list_open_figures();
 fprintf('Figures saved to:\n  %s\n', output_dir);
 fprintf('To close all figures: close all\n\n');
-
-
-%% ========================================================================
-%% Local helper functions
-%% ========================================================================
-function output_dir = make_output_dir(folder_path)
-    % Create a dated, auto-incremented output directory one level above the
-    % data folder.
-    [parent, data_name] = fileparts(folder_path);
-    [grandparent, ~]     = fileparts(parent);
-
-    date_str = datestr(now, 'yyyymmdd');
-    base     = sprintf('%s_figures_%s', data_name, date_str);
-
-    run_num = 1;
-    while exist(fullfile(grandparent, sprintf('%s_%d', base, run_num)), 'dir')
-        run_num = run_num + 1;
-    end
-
-    output_dir = fullfile(grandparent, sprintf('%s_%d', base, run_num));
-    mkdir(output_dir);
-    fprintf('Created output directory (run %d):\n  %s\n', run_num, output_dir);
-end
-
-function save_all_figures(output_dir)
-    % Save every open figure as both PNG (viewing) and FIG (editing).
-    figs = findall(0, 'Type', 'figure');
-    fprintf('Saving %d figures...\n', numel(figs));
-
-    saved = 0;
-    for i = 1:numel(figs)
-        fig = figs(i);
-
-        if ~isempty(fig.Name)
-            name = fig.Name;
-        else
-            name = sprintf('Figure_%d', fig.Number);
-        end
-
-        % Clean filename
-        name = strrep(name, ' ', '_');
-        name = regexprep(name, '[^\w\-]', '');
-        stem = sprintf('%d_%s', fig.Number, name);
-
-        try
-            saveas(fig, fullfile(output_dir, [stem '.png']));
-            saveas(fig, fullfile(output_dir, [stem '.fig']));
-            saved = saved + 1;
-        catch ME
-            fprintf('  Could not save %s: %s\n', stem, ME.message);
-        end
-    end
-
-    fprintf('Saved %d/%d figures.\n', saved, numel(figs));
-end
