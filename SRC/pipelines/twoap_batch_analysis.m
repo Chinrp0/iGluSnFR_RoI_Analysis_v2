@@ -152,7 +152,7 @@ function results = twoap_batch_analysis(dataset, options)
             h = plot_handles.(fn{i});
             figs = [figs, reshape(h(isgraphics(h, 'figure')), 1, [])]; %#ok<AGROW>
         end
-        n_saved = save_open_figures(output_dir, figs);
+        n_saved = save_open_figures(output_dir, config, figs);
         fprintf('  Saved %d figures to:\n    %s\n', n_saved, output_dir);
     end
 
@@ -892,7 +892,8 @@ function [ppr_pk, q_pair, A1, A2, A2_abs] = trace_ppr(trace, stim1, stim2, confi
 
     pre  = trace(1:max(stim1 - 1, 1)); pre = pre(isfinite(pre));
     base = mean(pre);
-    seg  = trace(max(stim2 - 2, stim1 + 1):(stim2 - 1)); seg = seg(isfinite(seg));
+    [r_lo, r_hi] = twoap_residual_window(stim1, stim2, config.twoAP.residual_window_ms, fd);
+    seg  = trace(r_lo:r_hi); seg = seg(isfinite(seg));
     resid = mean(seg); if ~isfinite(resid), resid = base; end
 
     w1 = stim1:min(stim1 + s1, nF); w2 = stim2:min(stim2 + search, nF);

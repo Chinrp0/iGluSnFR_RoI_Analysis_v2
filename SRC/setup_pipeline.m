@@ -32,6 +32,7 @@ function setup_pipeline()
         'oneap_pipeline', 'pipelines/oneap_pipeline.m';                          % 1AP: single-file path
         'oneap_batch_analysis', 'pipelines/oneap_batch_analysis.m';             % 1AP: batch driver
         'twoap_analyzer', 'tracenorm/twoap_analyzer.m';                % 2AP: per-ROI PPR metrics
+        'twoap_residual_window', 'tracenorm/twoap_residual_window.m';  % 2AP: pulse-2 residual frames
         'twoap_pipeline', 'pipelines/twoap_pipeline.m';                          % 2AP: single-file path
         'twoap_batch_analysis', 'pipelines/twoap_batch_analysis.m';             % 2AP: batch driver (PPR vs ISI)
         'load_dataset_folder', 'io/load_dataset_folder.m';             % loader: data + Recordings.csv

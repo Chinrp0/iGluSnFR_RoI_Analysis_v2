@@ -91,8 +91,11 @@ for p = 1:numel(parts)
     else
         output_dir = base_dir;
     end
-    n_saved = save_open_figures(output_dir);
-    fprintf('Saved %d figures to:\n  %s\n', n_saved, output_dir);
+    if cfg.output.save_figures
+        n_saved = save_open_figures(output_dir, cfg);
+        fprintf('Saved %d figures (%s) to:\n  %s\n', n_saved, cfg.output.figure_format, output_dir);
+    end
+    if ~cfg.output.save_data, tables = {}; end
     for k = 1:size(tables, 1)
         out_csv = fullfile(output_dir, tables{k, 2});
         try

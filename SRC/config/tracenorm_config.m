@@ -141,6 +141,12 @@ function config = tracenorm_config()
     config.twoAP.sync_latency_ms    = 10;       % "Sync time-lock" PPR: read BOTH pulses at this fixed
                                                 % latency post-stim (the synchronous-release phase, before
                                                 % the peak). See the three PPR methods in twoap_analyzer.
+    config.twoAP.residual_window_ms = 10;       % Pulse-2 local baseline ("residual") = mean of the
+                                                % trace over the last this-many ms before stim2
+                                                % (rounded to frames, >= 1 frame; never reaches back
+                                                % to stim1). 10 ms = 2 frames at 5 ms, 1 frame at 10 ms.
+                                                % Longer = less noisy but, at short ISI, sits further
+                                                % down pulse 1's rise and underestimates the residual.
     config.twoAP.baseline_guard_ms  = 0;        % Time before stim1 dropped from baseline
     config.twoAP.tau_peak_window_ms = 50;       % Decay-onset peak window (post-stim2)
     config.twoAP.tau_min_r2         = 0.5;
@@ -172,7 +178,6 @@ function config = tracenorm_config()
     end
     config.expected_frames      = NaN;
     config.recording_duration_s = NaN;
-    config.min_valid_frames     = 400;          % Minimum frames required for baseline calc
 
     %% ======================================================================
     %% Baseline (spontaneous rolling-median path)
@@ -221,10 +226,17 @@ function config = tracenorm_config()
     %% ======================================================================
     %% Quality metrics
     %% ======================================================================
+    % Spont ROI QC (quality_assessor) and the baseline_detector high-noise flag.
+    % An ROI is "active" when it passes the baseline/signal criteria AND has
+    % at least min_events_for_active events.
     config.quality = struct();
-    config.quality.min_baseline_stability = 0.8;
-    config.quality.max_noise_level        = 0.2;
-    config.quality.min_snr                = 2.0;
+    config.quality.min_snr               = 2.0;   % Min dF/F signal-to-noise ratio
+    config.quality.max_baseline_cv       = 0.2;   % Max baseline coefficient of variation
+    config.quality.min_valid_fraction    = 0.8;   % Min fraction of valid baseline frames
+    config.quality.min_dynamic_range     = 0.01;  % Min dF/F dynamic range
+    config.quality.min_dfof_valid        = 0.8;   % Min fraction of valid dF/F frames
+    config.quality.min_events_for_active = 2;     % Min events for an ROI to count as active
+    config.quality.max_event_fraction    = 0.5;   % Max fraction of frames inside events
 
     %% ======================================================================
     %% Temporal (filled from Recordings.csv by apply_recording_timing)
@@ -232,8 +244,8 @@ function config = tracenorm_config()
     config.temporal = struct();
     config.temporal.frame_duration_ms    = config.frame_dur_ms;          % = exposure_ms
     config.temporal.recording_duration_s = config.recording_duration_s;
-    config.temporal.max_iei_s            = 10;    % Max IEI to analyze (s)
-    config.temporal.bin_size_ms          = 50;    % IEI histogram bins (ms)
+    config.temporal.max_iei_s            = 10;    % Max IEI plotted (s) (plot_iei_comparison)
+    config.temporal.bin_size_ms          = 50;    % Linear IEI histogram bin (ms)
 
     %% ======================================================================
     %% Visualization
@@ -241,7 +253,6 @@ function config = tracenorm_config()
     config.visualization = struct();
     config.visualization.plot_baseline = true;
     config.visualization.plot_events   = true;
-    config.visualization.max_traces_to_plot = 100;
     % Legacy convenience aliases; group colors are the source of truth in
     % config.groups (use color_for/parse_group). Default to the WT/R213W groups,
     % falling back to the first two configured groups so older plotters keep
@@ -277,10 +288,12 @@ function config = tracenorm_config()
     %% Output
     %% ======================================================================
     config.output = struct();
-    config.output.save_figures  = false;
-    config.output.figure_format = 'png';
-    config.output.figure_dpi    = 300;
-    config.output.save_data     = false;
+    % run_pipeline writes into F_Analysis_<date>--<run> next to the data folder.
+    config.output.save_figures  = true;    % Save every open figure after each run
+    config.output.figure_format = 'png';   % Image format: 'png' | 'tiff' | 'jpg' | 'pdf' | 'svg' | 'eps'
+    config.output.figure_dpi    = 300;     % Resolution for raster formats (png/tiff/jpg)
+    config.output.save_fig      = true;    % Also save an editable MATLAB .fig
+    config.output.save_data     = true;    % Write the per-ROI / per-trial metric tables (.csv)
 
     %% ======================================================================
     %% Summary

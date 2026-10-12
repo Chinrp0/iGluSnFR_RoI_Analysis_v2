@@ -38,21 +38,15 @@ function quality_metrics = quality_assessor(raw_data, baseline_stats, dfof_stats
     event_frames_per_roi = event_stats.event_frames_per_roi;
     
     %% === Define Quality Criteria ===
-    % Use config parameters if available, otherwise use defaults
-    if isfield(config, 'quality_criteria')
-        criteria = config.quality_criteria;
-    else
-        % Default quality criteria
-        criteria = struct();
-        criteria.min_snr = 2.0;                    % Minimum signal-to-noise ratio
-        criteria.max_baseline_cv = 0.2;            % Maximum baseline coefficient of variation (20%)
-        criteria.min_valid_fraction = 0.8;         % Minimum fraction of valid baseline data (80%)
-        criteria.min_dynamic_range = 0.01;         % Minimum dF/F dynamic range (1%)
-        criteria.max_transport_slope = 0.1;        % Maximum slope for transport detection
-        criteria.min_dfof_valid = 0.8;             % Minimum fraction of valid dF/F data
-        criteria.min_events_for_active = 2;        % Minimum events to consider ROI "active"
-        criteria.max_event_fraction = 0.5;         % Maximum fraction of frames that can be events
+    % From tracenorm_config (config.quality); no built-in defaults, so a
+    % missing field is an error rather than a silent fallback.
+    required = {'min_snr', 'max_baseline_cv', 'min_valid_fraction', 'min_dynamic_range', ...
+                'min_dfof_valid', 'min_events_for_active', 'max_event_fraction'};
+    if ~isfield(config, 'quality') || ~all(isfield(config.quality, required))
+        error('quality_assessor:config', ...
+            'config.quality must define: %s (see tracenorm_config).', strjoin(required, ', '));
     end
+    criteria = config.quality;
     
     %% === Apply Quality Flags ===
     quality_flags = struct();

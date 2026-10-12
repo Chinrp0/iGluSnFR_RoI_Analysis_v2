@@ -105,11 +105,10 @@ function res = twoap_analyzer(dfof_data, baseline_stats, config)
     noise_excluded = false(1, numROIs);
     analyzed       = false(1, numROIs);
 
-    % Local baseline window before stim2: the 2 frames immediately before it
+    % Local baseline window before stim2: the last residual_window_ms before it
     % (best available estimate of the residual level; at very short ISI this
-    % sits on the pulse-1 rise and slightly overestimates the residual).
-    b2_lo = max(stim2 - 2, stim1 + 1);
-    b2_hi = stim2 - 1;
+    % sits on the pulse-1 rise and slightly underestimates the residual).
+    [b2_lo, b2_hi] = twoap_residual_window(stim1, stim2, p.residual_window_ms, frame_dur);
 
     for roi = 1:numROIs
         trace = dfof_data(:, roi);

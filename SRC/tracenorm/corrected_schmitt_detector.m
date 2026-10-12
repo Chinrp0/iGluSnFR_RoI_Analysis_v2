@@ -28,6 +28,7 @@ function [event_mask, event_stats] = corrected_schmitt_detector(dfof_data, confi
     noise_exclusion_window = config.corrected_schmitt.noise_exclusion_window; % 7 frames
     min_event_duration = config.corrected_schmitt.min_event_duration;       % 3 frames
     sustained_percentile = config.corrected_schmitt.sustained_percentile;   % 85th percentile
+    merge_gap_frames = config.corrected_schmitt.merge_gap_frames;           % 2 frames
     
     if config.verbose
         fprintf('CORRECTED Schmitt trigger with proper noise estimation:\n');
@@ -69,7 +70,7 @@ function [event_mask, event_stats] = corrected_schmitt_detector(dfof_data, confi
 
         % Apply corrected Schmitt trigger with validation
         roi_events = corrected_schmitt_with_validation(roi_trace, roi_upper, roi_lower, ...
-            min_event_duration, false);
+            min_event_duration, merge_gap_frames, false);
 
         event_mask(:, roi) = roi_events;
     end
@@ -257,7 +258,7 @@ function outlier_mask = create_fallback_outlier_mask(dfof_data, config)
 end
 
 function event_mask = corrected_schmitt_with_validation(trace, upper_thresh, lower_thresh, ...
-    min_sustained_frames, debug_mode)
+    min_sustained_frames, merge_gap_frames, debug_mode)
     % Corrected Schmitt trigger with proper validation period
     
     numFrames = length(trace);
@@ -341,7 +342,7 @@ function event_mask = corrected_schmitt_with_validation(trace, upper_thresh, low
         fprintf('Total validated events: %d\n', size(validated_events, 1));
     end
     
-    %% === Phase 2: Merge Nearby Events (≤2 frame gap) ===
+    %% === Phase 2: Merge Nearby Events (gap <= merge_gap_frames) ===
     if isempty(validated_events)
         return;
     end
@@ -355,7 +356,7 @@ function event_mask = corrected_schmitt_with_validation(trace, upper_thresh, low
         next_end = validated_events(i, 2);
         
         gap = next_start - current_end - 1;
-        if gap <= 2  % Merge nearby events
+        if gap <= merge_gap_frames  % Merge nearby events
             current_end = next_end;
         else
             merged_events(end+1, :) = [current_start, current_end];

@@ -60,6 +60,8 @@ function results = spont_batch_analysis(dataset, options)
     % The plot modules take the time base from options (rates, raster length).
     options.frame_rate           = config.frame_rate;
     options.recording_duration_s = config.recording_duration_s;
+    options.max_iei_s            = config.temporal.max_iei_s;     % IEI plot range
+    options.iei_bin_size_ms      = config.temporal.bin_size_ms;   % IEI histogram bin
     fprintf('  Frame interval %.4g ms (%.4g Hz), %d-%d frames (metadata)\n', ...
         config.frame_dur_ms, config.frame_rate, min(nF), max(nF));
 
@@ -189,7 +191,9 @@ function results = compare_pair(ga, gb, folder_path, process_time, options)
         % Inter-Event Interval analysis
         if options.createPlots && getfield_safe(options, 'create_iei_plot', true)
             try
-                plot_options = struct('frame_rate', options.frame_rate);
+                plot_options = struct('frame_rate', options.frame_rate, ...
+                    'max_iei_s', options.max_iei_s, ...
+                    'bin_size_ms', options.iei_bin_size_ms);
                 additional_plots.iei_comparison = plot_iei_comparison(results, plot_options);
             catch ME
                 fprintf('  WARNING: Failed to create IEI plot: %s\n', ME.message);

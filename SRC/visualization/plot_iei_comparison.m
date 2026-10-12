@@ -5,19 +5,17 @@ function fig = plot_iei_comparison(results, options)
     %
     % Args:
     %   results - Output from spont_batch_analysis()
-    %   options - Optional struct with:
-    %             .frame_rate (default: 100 Hz for 10ms exposure)
-    %             .max_iei_s (default: 10s, max IEI to plot)
-    %             .bin_size_ms (default: 50ms)
-    
-    if nargin < 2
-        options = struct();
+    %   options - Struct with (all required; spont_batch_analysis fills them
+    %             from the metadata and tracenorm_config.temporal):
+    %             .frame_rate  (Hz)
+    %             .max_iei_s   (max IEI to plot, s)
+    %             .bin_size_ms (linear IEI histogram bin, ms)
+
+    required = {'frame_rate', 'max_iei_s', 'bin_size_ms'};
+    if nargin < 2 || ~all(isfield(options, required))
+        error('plot_iei_comparison:options', ...
+            'options must define: %s (see config.temporal).', strjoin(required, ', '));
     end
-    
-    % Set defaults
-    if ~isfield(options, 'frame_rate'), options.frame_rate = 100; end  % 10ms exposure = 100 Hz
-    if ~isfield(options, 'max_iei_s'), options.max_iei_s = 10; end
-    if ~isfield(options, 'bin_size_ms'), options.bin_size_ms = 50; end
     
     fprintf('Creating inter-event interval comparison...\n');
     

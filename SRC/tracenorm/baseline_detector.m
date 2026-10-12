@@ -152,7 +152,7 @@ function stats = calculate_baseline_stats(data, baseline, outlier_mask, config)
     
     stats.quality_flags = struct();
     stats.quality_flags.low_valid_data = valid_fraction < (config.min_baseline_frames / size(data, 1));
-    stats.quality_flags.high_noise = baseline_cv > 0.2;  % >20% CV indicates high noise
+    stats.quality_flags.high_noise = baseline_cv > config.quality.max_baseline_cv;
     stats.quality_flags.potential_transport = transport_rois;
     
     % Overall quality summary
