@@ -1,8 +1,11 @@
-function results = spont_batch_analysis(folder_path, options)
+function results = spont_batch_analysis(dataset, options)
     % SPONT_BATCH_ANALYSIS - Batch analysis of spontaneous glutamate release
     %
     % Counterpart to oneap_batch_analysis / twoap_batch_analysis for spontaneous
-    % recordings. Every file is processed once by spont_pipeline (rolling-median
+    % recordings, taking a dataset from load_dataset_folder (one frame interval;
+    % run_pipeline splits mixed folders first). Frame interval and frame count
+    % come from Recordings.csv per file. Every file is processed once by
+    % spont_pipeline (rolling-median
     % baseline -> dF/F -> corrected Schmitt event detection). Files are grouped
     % by genotype x drug: genotype from config.groups (parse_group, fails loudly
     % on an unrecognised or ambiguous name) and drug from the "+drug" token
@@ -10,9 +13,9 @@ function results = spont_batch_analysis(folder_path, options)
     % figures are made once per genotype pair within each drug condition.
     %
     % Inputs:
-    %   folder_path - folder with the spontaneous raw-mean CSVs
-    %   options     - struct: verbose, createPlots, frame_rate,
-    %                 recording_duration_s, create_*_plot switches
+    %   dataset - struct from load_dataset_folder (spontaneous recordings)
+    %   options - struct: verbose, createPlots, create_*_plot switches
+    %             (frame_rate / recording_duration_s are set from the metadata)
     %
     % Output:
     %   results - .groups (one aggregate per genotype x drug group),
@@ -31,19 +34,43 @@ function results = spont_batch_analysis(folder_path, options)
     if ~isfield(options, 'continueOnError'), options.continueOnError = true; end
     if ~isfield(options, 'savePlots'), options.savePlots = false; end
 
+    if ~isstruct(dataset) || ~isfield(dataset, 'files')
+        error('spont_batch_analysis:input', ...
+            'spont_batch_analysis takes a dataset from load_dataset_folder.');
+    end
+    folder_path = dataset.folder;
     evalc('config = tracenorm_config();');
     config.dataType = 'Spont';
 
     fprintf('=== Spontaneous Batch Analysis (genotype x drug) ===\n');
     fprintf('Folder: %s\n', folder_path);
 
-    %% Step 1: find files and assign genotype x drug groups
-    if options.verbose
-        fprintf('\nStep 1: Finding and classifying data files...\n');
+    %% Step 1: files, groups and the shared time base (from Recordings.csv)
+    entries = dataset.files;
+    if isempty(entries)
+        error('spont_batch_analysis:noFiles', 'The dataset has no loadable files.');
     end
-    [files, genotypes, drugs] = classify_files_by_group(folder_path, config);
-    if isempty(files)
-        error('spont_batch_analysis:noFiles', 'No data files found in folder: %s', folder_path);
+    fi = arrayfun(@(f) f.meta.frame_interval_ms, entries);
+    if (max(fi) - min(fi)) > config.metadata.interval_tol_frac * median(fi)
+        error('spont_batch_analysis:mixedInterval', ...
+            'Files have different Frame_Interval_ms; split them first (run_pipeline does).');
+    end
+    nF = arrayfun(@(f) f.meta.n_frames, entries);
+    config = apply_recording_timing(config, median(fi), max(nF));
+    % The plot modules take the time base from options (rates, raster length).
+    options.frame_rate           = config.frame_rate;
+    options.recording_duration_s = config.recording_duration_s;
+    fprintf('  Frame interval %.4g ms (%.4g Hz), %d-%d frames (metadata)\n', ...
+        config.frame_dur_ms, config.frame_rate, min(nF), max(nF));
+
+    files     = {entries.path};
+    genotypes = {entries.genotype};
+    drugs     = {entries.drug};
+    if options.verbose
+        fprintf('\nStep 1: Files by genotype x drug...\n');
+        for i = 1:numel(entries)
+            fprintf('  %-12s %-10s %s\n', genotypes{i}, drugs{i}, entries(i).name);
+        end
     end
 
     %% Step 2: process every file once
@@ -51,7 +78,7 @@ function results = spont_batch_analysis(folder_path, options)
         fprintf('\nStep 2: Processing %d files...\n', numel(files));
     end
     tic;
-    file_results = process_files(files);
+    file_results = process_files(entries, config);
     process_time = toc;
     ok = ~cellfun(@isempty, file_results);
     fprintf('  Processed %d/%d files successfully in %.3f s\n', sum(ok), numel(files), process_time);
@@ -101,8 +128,8 @@ function results = spont_batch_analysis(folder_path, options)
     results.processing_info = struct('folder_path', folder_path, 'files', {files}, ...
         'genotypes', {genotypes}, 'drugs', {drugs}, 'process_time', process_time, ...
         'timestamp', datetime('now'), ...
-        'frame_rate', getfield_safe(options, 'frame_rate', config.frame_rate), ...
-        'recording_duration_s', getfield_safe(options, 'recording_duration_s', config.recording_duration_s));
+        'metadata_file', dataset.metadata_file, 'frame_interval_ms', config.frame_dur_ms, ...
+        'frame_rate', config.frame_rate, 'recording_duration_s', config.recording_duration_s);
 end
 
 function results = compare_pair(ga, gb, folder_path, process_time, options)
@@ -655,38 +682,22 @@ function fig = create_file_summary_final(wt_data, mut_data, comparison)
     sgtitle(['File-Level Summary: ' lblA ' vs ' lblB], 'FontSize', 16, 'FontWeight', 'bold');
 end
 
-function [files, genotypes, drugs] = classify_files_by_group(folder_path, config)
-    % Genotype (config.groups via parse_group - errors on an unknown or
-    % ambiguous name rather than silently dropping or mislabelling a file) and
-    % drug (parse_drug) for every data file. A Recordings.csv metadata file in
-    % the folder is not a data file and is skipped.
-    listing = list_data_files(folder_path);   % .csv / .xlsx / .xls
-    if ~isempty(listing)
-        listing = listing(~strcmpi({listing.name}, config.metadata.filename));
-    end
-    files = cell(1, numel(listing)); genotypes = files; drugs = files;
-    for i = 1:numel(listing)
-        files{i}     = fullfile(listing(i).folder, listing(i).name);
-        genotypes{i} = parse_group(listing(i).name, config);
-        drugs{i}     = parse_drug(listing(i).name, config);
-        fprintf('  %-12s %-10s %s\n', genotypes{i}, drugs{i}, listing(i).name);
-    end
-end
-
-function file_results = process_files(files)
-    % Run spont_pipeline on every file once. A failure is reported (not
-    % silently dropped) and leaves an empty slot.
-    file_results = cell(1, numel(files));
-    for i = 1:numel(files)
+function file_results = process_files(entries, config)
+    % Run spont_pipeline once per dataset file (from memory, with that file's
+    % Recordings.csv timing). A failure is reported, not silently dropped, and
+    % leaves an empty slot.
+    file_results = cell(1, numel(entries));
+    for i = 1:numel(entries)
         try
-            result = spont_pipeline(files{i}, struct('createPlots', false, 'verbose', false));
+            result = spont_pipeline(entries(i), struct('createPlots', false, ...
+                'verbose', false, 'config', config));
             if isfield(result, 'fileResults') && ~isempty(result.fileResults)
                 file_results{i} = result.fileResults{1};
             else
-                fprintf('  [%d/%d] NO RESULT %s\n', i, numel(files), files{i});
+                fprintf('  [%d/%d] NO RESULT %s\n', i, numel(entries), entries(i).name);
             end
         catch ME
-            fprintf('  [%d/%d] FAILED %s: %s\n', i, numel(files), files{i}, ME.message);
+            fprintf('  [%d/%d] FAILED %s: %s\n', i, numel(entries), entries(i).name, ME.message);
         end
     end
 end

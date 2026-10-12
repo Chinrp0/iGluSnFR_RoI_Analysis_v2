@@ -15,8 +15,22 @@ function results = spont_pipeline(folder, options)
     if ~isfield(options, 'savePlots'), options.savePlots = false; end
     if ~isfield(options, 'useCorrectedSchmitt'), options.useCorrectedSchmitt = true; end  % NEW: Use corrected version by default
     
-    % Determine processing mode
-    if isfile(folder) && endsWith(folder, {'.csv', '.xlsx', '.xls'}, 'IgnoreCase', true)
+    % Determine processing mode. A dataset.files entry (load_dataset_folder) is
+    % processed from memory with ITS Recordings.csv timing (frame interval,
+    % frame count); options.config, if given, is the base config.
+    if isstruct(folder) && isfield(folder, 'meta')
+        processingMode = 'dataset_entry';
+        if ~isfield(options, 'config') || isempty(options.config)
+            evalc('options.config = tracenorm_config();');
+        end
+        options.config.dataType = 'Spont';
+        options.config = apply_recording_timing(options.config, ...
+            folder.meta.frame_interval_ms, folder.meta.n_frames);
+        if options.verbose
+            fprintf('=== Single File Analysis Mode (dataset) ===\n');
+            fprintf('Processing file: %s\n', folder.name);
+        end
+    elseif isfile(folder) && endsWith(folder, {'.csv', '.xlsx', '.xls'}, 'IgnoreCase', true)
         processingMode = 'single_file';
         if options.verbose
             fprintf('=== Single File Analysis Mode ===\n');
@@ -119,7 +133,14 @@ function [dataCell, metadataArray] = loadDataFiles(folder, options, processingMo
         loadOptions = struct();
         loadOptions.dataType = 'single';
         
-        if strcmp(processingMode, 'single_file')
+        if strcmp(processingMode, 'dataset_entry')
+            entry = folder;
+            [~, stem] = fileparts(entry.name);
+            dataCell = {entry.raw};
+            metadataArray = struct('filename', stem, 'filepath', entry.path, ...
+                'numFrames', size(entry.raw, 1), 'numROIs', size(entry.raw, 2), ...
+                'dataType', 'single', 'loadTime', datetime('now'));
+        elseif strcmp(processingMode, 'single_file')
             [singleData, singleMetadata] = loader.loadSingleFile(folder, loadOptions);
             dataCell = {singleData};
             metadataArray = singleMetadata;
@@ -194,8 +215,19 @@ function fileResult = processSingleFileWithCorrectedDetector(data, metadata, opt
     
     [numFrames, numROIs] = size(data);
     
-    % Load configuration
-    config = tracenorm_config();
+    % Configuration: the per-file metadata timing when called with a dataset
+    % entry (set up in spont_pipeline), otherwise the plain config.
+    if isfield(options, 'config') && ~isempty(options.config)
+        config = options.config;
+    else
+        evalc('config = tracenorm_config();');
+    end
+    if ~isfinite(config.frame_rate)
+        error('spont_pipeline:noTiming', ...
+            ['No frame timing: it comes from Recordings.csv. Call spont_pipeline ' ...
+             'with a dataset.files entry (load_dataset), or pass options.config ' ...
+             'set up with apply_recording_timing.']);
+    end
     config.verbose = options.verbose && numROIs > 2000;
     
     if options.verbose && numROIs > 2000

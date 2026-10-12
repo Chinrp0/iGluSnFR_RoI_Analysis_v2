@@ -1,20 +1,23 @@
-function results = twoap_batch_analysis(folder_path, options)
+function results = twoap_batch_analysis(dataset, options)
     % TWOAP_BATCH_ANALYSIS - Batch analysis of 2AP (paired-pulse / PPF) data
     %
-    % Counterpart to oneap_batch_analysis for paired-pulse recordings. Each file
-    % is one region at one ISI (encoded in the filename, e.g. PPF-30ms). Files are
-    % classified by group (parse_group), processed through twoap_pipeline, and the
+    % Counterpart to oneap_batch_analysis for paired-pulse recordings. Takes a
+    % dataset from load_dataset_folder: each file is one region at one ISI, with
+    % stim1, the ISI and the frame interval from Recordings.csv. All files must
+    % share one frame interval (run_pipeline splits mixed folders first). Files
+    % are grouped by genotype x drug, processed through twoap_pipeline, and the
     % paired-pulse ratio (PPR = A2/A1) is aggregated PER COVERSLIP at each ISI, for
     % both the peak-max and time-locked methods. Produces the PPR-vs-ISI figure, a
-    % method-comparison montage, a per-ROI metrics table and a summary.
+    % method-comparison montage, a per-ROI metrics table and a summary. Files
+    % whose stims don't match the reported ISI are listed (isi_check).
     %
     % Inputs:
-    %   folder_path - folder containing raw-mean PPF CSV/XLSX files
-    %   options     - struct: verbose, createPlots, createMontage
+    %   dataset - struct from load_dataset_folder (one frame interval)
+    %   options - struct: verbose, createPlots, createMontage
     %
     % Output:
     %   results - struct with .groups, .ppr_by_isi, .plot_handles,
-    %             .twoap_metrics_table, .processing_info
+    %             .twoap_metrics_table, .isi_checks, .processing_info
 
     if nargin < 2, options = struct(); end
     if ~isfield(options, 'verbose'),      options.verbose = true; end
@@ -25,64 +28,94 @@ function results = twoap_batch_analysis(folder_path, options)
     % calling twoap_batch_analysis directly to get a dated figures folder.
     if ~isfield(options, 'saveFigures'),  options.saveFigures = false; end
 
+    if ~isstruct(dataset) || ~isfield(dataset, 'files')
+        error('twoap_batch_analysis:input', ...
+            'twoap_batch_analysis takes a dataset from load_dataset_folder.');
+    end
+    folder_path = dataset.folder;
     config = local_config();
 
     fprintf('=== 2AP Paired-Pulse (PPF) Batch Analysis ===\n');
     fprintf('Folder: %s\n', folder_path);
 
-    %% Step 1: find + classify files
-    csv_files = list_data_files(folder_path);
-    if isempty(csv_files)
-        error('twoap_batch_analysis:noFiles', 'No CSV/XLSX files found in folder: %s', folder_path);
+    %% Step 1: files + one shared time base (stim1 at the same epoch index)
+    files = dataset.files;
+    if isempty(files)
+        error('twoap_batch_analysis:noFiles', 'The dataset has no loadable files.');
     end
-    file_paths = arrayfun(@(f) fullfile(f.folder, f.name), csv_files, 'UniformOutput', false);
-    file_group = cellfun(@(pth) parse_group(pth, config), file_paths, 'UniformOutput', false);
-
-    configured  = {config.groups.name};
-    group_names = configured(ismember(configured, file_group));  % configured order, present only
-    if numel(group_names) >= 2
-        fprintf('  Mode: %s comparison\n', strjoin(group_names, ' vs '));
-    else
-        group_names = unique(file_group, 'stable');
-        fprintf('  Mode: single/pooled group(s): %s\n', strjoin(group_names, ', '));
+    fi = arrayfun(@(f) f.meta.frame_interval_ms, files);
+    if (max(fi) - min(fi)) > config.metadata.interval_tol_frac * median(fi)
+        error('twoap_batch_analysis:mixedInterval', ...
+            'Files have different Frame_Interval_ms (%s); split them first (run_pipeline does).', ...
+            strjoin(unique(cellstr(num2str(fi(:), '%.4g'))), ', '));
     end
-    fprintf('  Found %d data files (%s)\n', numel(file_paths), ...
-        strjoin(arrayfun(@(g) sprintf('%s:%d', group_names{g}, ...
-        sum(strcmp(file_group, group_names{g}))), 1:numel(group_names), 'UniformOutput', false), ', '));
+    pre_f  = round(config.twoAP.epoch_pre_ms  / median(fi));
+    post_f = round(config.twoAP.epoch_post_ms / median(fi));
+    config = apply_recording_timing(config, median(fi), pre_f + post_f + 1);
+    config.twoAP.stim1_frame = pre_f + 1;            % stim1 index within each epoch
+    fprintf('  Frame interval %.4g ms (metadata) | epoch %d frames, stim1 at %d\n', ...
+        config.frame_dur_ms, config.expected_frames, config.twoAP.stim1_frame);
 
     %% Step 2: process every file
     fprintf('\nProcessing files...\n');
-    nFiles = numel(file_paths);
+    nFiles = numel(files);
     fileResults = cell(nFiles, 1);
     tic;
     for i = 1:nFiles
         try
-            fileResults{i} = twoap_pipeline(file_paths{i}, struct('verbose', false), config);
+            fileResults{i} = twoap_pipeline(files(i), struct('verbose', false), config);
             fr = fileResults{i};
             t  = fr.twoap;
-            fprintf('  [%d/%d] %s (%s, ISI %g ms): %d ROIs, %d pulse-1 responders, PPR n=%d/%d/%d (max/sync/p1lock)\n', ...
-                i, nFiles, fr.filename, fr.group, fr.isi_ms, fr.numROIs, ...
+            fprintf('  [%d/%d] %s (%s %s, ISI %g ms, %s): %d ROIs, %d pulse-1 responders, PPR n=%d/%d/%d (max/sync/p1lock)\n', ...
+                i, nFiles, fr.filename, fr.genotype, fr.drug, fr.isi_ms, fr.ppf_mode, fr.numROIs, ...
                 t.n_responders1, t.n_ppr_valid_max, t.n_ppr_valid_sync, t.n_ppr_valid_p1lock);
+            if ~isempty(fr.isi_check)
+                fprintf('        ISI CHECK: %s\n', fr.isi_check);
+            end
+            if ~isempty(fr.meta.flags)
+                fprintf('        Step1 flags: %s\n', strjoin(fr.meta.flags, ', '));
+            end
         catch ME
-            fprintf('  [%d/%d] FAILED %s: %s\n', i, nFiles, csv_files(i).name, ME.message);
+            fprintf('  [%d/%d] FAILED %s: %s\n', i, nFiles, files(i).name, ME.message);
             fileResults{i} = [];
         end
     end
     process_time = toc;
     fprintf('  Processing complete in %.2f s\n', process_time);
 
-    %% Step 3: aggregate per group
-    fprintf('\nAggregating by group / ISI (per coverslip)...\n');
+    % Files whose stims don't match the reported ISI (look at these when
+    % interpreting PPR; the ISI-derived stim2 was used for them).
+    ok = ~cellfun(@isempty, fileResults(:)');
+    isi_checks = table('Size', [0 4], 'VariableTypes', {'string', 'double', 'string', 'string'}, ...
+        'VariableNames', {'filename', 'isi_ms', 'ppf_mode', 'isi_check'});
+    for i = find(ok)
+        fr = fileResults{i};
+        if ~isempty(fr.isi_check)
+            isi_checks(end+1, :) = {string(fr.filename), fr.isi_ms, string(fr.ppf_mode), string(fr.isi_check)}; %#ok<AGROW>
+        end
+    end
+
+    %% Step 3: aggregate per group (genotype x drug)
+    fprintf('\nAggregating by genotype x drug / ISI (per coverslip)...\n');
+    genotypes = {files.genotype};
+    drugs     = {files.drug};
+    [geno_list, drug_list] = genotype_drug_order(genotypes(ok), drugs(ok), config);
     groups = [];
-    for g = 1:numel(group_names)
-        gname = group_names{g};
-        mask  = strcmp(file_group(:)', gname) & ~cellfun(@isempty, fileResults(:)');
-        gd = aggregate_group_2ap(fileResults(mask), gname, color_for(gname, config));
-        if isempty(groups), groups = gd; else, groups(g) = gd; end %#ok<AGROW>
-        fprintf('  %s: %d files, %d coverslips, %d ISIs (%s ms), %d ROIs, %d pulse-1 responders\n', ...
-            gd.name, gd.num_files, gd.num_coverslips, numel(gd.isi_list), ...
-            strjoin(arrayfun(@(x) num2str(x), gd.isi_list, 'UniformOutput', false), ','), ...
-            gd.total_rois, gd.n_responders1);
+    for d = 1:numel(drug_list)
+        for g = 1:numel(geno_list)
+            mask = ok & strcmp(genotypes, geno_list{g}) & strcmp(drugs, drug_list{d});
+            if ~any(mask), continue; end
+            gname = sprintf('%s %s', geno_list{g}, drug_list{d});
+            gd = aggregate_group_2ap(fileResults(mask), gname, ...
+                group_color(geno_list{g}, d, numel(drug_list), config));
+            gd.genotype = geno_list{g};
+            gd.drug     = drug_list{d};
+            if isempty(groups), groups = gd; else, groups(end+1) = gd; end %#ok<AGROW>
+            fprintf('  %s: %d files, %d coverslips, %d ISIs (%s ms), %d ROIs, %d pulse-1 responders\n', ...
+                gd.name, gd.num_files, gd.num_coverslips, numel(gd.isi_list), ...
+                strjoin(arrayfun(@(x) num2str(x), gd.isi_list, 'UniformOutput', false), ','), ...
+                gd.total_rois, gd.n_responders1);
+        end
     end
 
     %% Step 4: PPR summaries (per coverslip, by ISI)
@@ -133,13 +166,23 @@ function results = twoap_batch_analysis(folder_path, options)
     results.ppr_by_isi          = ppr_by_isi;
     results.plot_handles        = plot_handles;
     results.twoap_metrics_table = twoap_metrics_table;
+    results.isi_checks          = isi_checks;
     results.output_dir          = output_dir;   % '' unless options.saveFigures
     results.processing_info     = struct('folder_path', folder_path, ...
+        'metadata_file', dataset.metadata_file, ...
         'process_time', process_time, 'timestamp', datetime('now'), ...
-        'exposure_ms', config.exposure_ms, 'stim1_frame', config.twoAP.stim1_frame);
+        'frame_interval_ms', config.frame_dur_ms, 'epoch_frames', config.expected_frames, ...
+        'epoch_stim1_frame', config.twoAP.stim1_frame);
 
-    print_summary_2ap(groups);
+    print_summary_2ap(groups, config);
     print_gating_bias(groups, config);
+    if height(isi_checks) > 0
+        fprintf('\n*** %d file(s) whose stims do not match the reported ISI (stim2 set from ISI) ***\n', ...
+            height(isi_checks));
+        disp(isi_checks);
+    else
+        fprintf('\nISI check: all files'' stims match the reported ISI.\n');
+    end
 end
 
 %% ======================================================================
@@ -155,6 +198,7 @@ function gd = aggregate_group_2ap(fileResults, name, color)
     q_pair = [];
     is_responder1 = []; is_responder2 = []; prestim_sd = [];
     isi_of_roi = []; coverslip_of_roi = {}; file_of_roi = []; filenames = {};
+    file_isi_check = {}; file_ppf_mode = {}; roi_index = [];
 
     % Reference file for the method-comparison montage: prefer the SHORTEST ISI
     % with enough pulse-1 responders (methods diverge most there), else the file
@@ -173,6 +217,8 @@ function gd = aggregate_group_2ap(fileResults, name, color)
         if isempty(fr), continue; end
         t = fr.twoap;
         filenames{end+1} = fr.filename; %#ok<AGROW>
+        file_isi_check{end+1} = fr.isi_check; %#ok<AGROW>
+        file_ppf_mode{end+1}  = fr.ppf_mode;  %#ok<AGROW>
         nR = fr.numROIs;
 
         ppr_max       = [ppr_max,       t.ppr_max];        %#ok<AGROW>
@@ -190,6 +236,7 @@ function gd = aggregate_group_2ap(fileResults, name, color)
         isi_of_roi    = [isi_of_roi,    repmat(fr.isi_ms, 1, nR)]; %#ok<AGROW>
         coverslip_of_roi = [coverslip_of_roi, repmat({parse_coverslip_id(fr.filename)}, 1, nR)]; %#ok<AGROW>
         file_of_roi   = [file_of_roi,   repmat(i, 1, nR)]; %#ok<AGROW>
+        roi_index     = [roi_index,     1:nR];             %#ok<AGROW>
 
         % Accumulate coverslip x ISI average traces, nan-aware, over QC-passed ROIs
         % (analyzable + not noise-excluded; NOT filtered on response, so no selection
@@ -273,6 +320,9 @@ function gd = aggregate_group_2ap(fileResults, name, color)
     gd.coverslip_of_roi = coverslip_of_roi;
     gd.file_of_roi      = file_of_roi;
     gd.filenames        = filenames;
+    gd.file_isi_check   = file_isi_check;
+    gd.roi_index        = roi_index;              % ROI number within its file
+    gd.file_ppf_mode    = file_ppf_mode;
     gd.montage_ref      = montage_ref;
 
     % Finalize coverslip x ISI average traces. cs_avg = the QC-passed grand average
@@ -904,23 +954,27 @@ end
 %% Output / utility
 %% ======================================================================
 function T = build_twoap_table(groups)
-    grp = {}; fname = {}; cs = {}; roi = []; isi = []; resp1 = [];
+    grp = {}; drug = {}; fname = {}; cs = {}; roi = []; isi = []; resp1 = [];
+    pmode = {}; ichk = {};
     a1 = []; a2 = []; pmax = []; a1s = []; a2s = []; psync = []; a2p = []; pp1 = []; sd = [];
     q = [];
     for g = 1:numel(groups)
         gd = groups(g);
         n = gd.total_rois;
         for j = 1:n
-            grp{end+1,1} = gd.name; %#ok<AGROW>
+            grp{end+1,1} = gd.genotype; %#ok<AGROW>
+            drug{end+1,1} = gd.drug; %#ok<AGROW>
             fidx = gd.file_of_roi(j);
             if fidx >= 1 && fidx <= numel(gd.filenames)
                 fname{end+1,1} = gd.filenames{fidx}; %#ok<AGROW>
+                pmode{end+1,1} = gd.file_ppf_mode{fidx}; %#ok<AGROW>
+                ichk{end+1,1}  = gd.file_isi_check{fidx}; %#ok<AGROW>
             else
-                fname{end+1,1} = ''; %#ok<AGROW>
+                fname{end+1,1} = ''; pmode{end+1,1} = ''; ichk{end+1,1} = ''; %#ok<AGROW>
             end
             cs{end+1,1} = gd.coverslip_of_roi{j}; %#ok<AGROW>
         end
-        roi   = [roi;   (1:n)'];                 %#ok<AGROW>
+        roi   = [roi;   gd.roi_index(:)];        %#ok<AGROW>
         isi   = [isi;   gd.isi_of_roi(:)];        %#ok<AGROW>
         resp1 = [resp1; gd.is_responder1(:)];     %#ok<AGROW>
         a1    = [a1;    gd.peak1_amp(:)];          %#ok<AGROW>
@@ -934,14 +988,13 @@ function T = build_twoap_table(groups)
         q     = [q;     gd.q_pair(:)];             %#ok<AGROW>
         sd    = [sd;    gd.prestim_sd(:)];         %#ok<AGROW>
     end
-    T = table(grp, fname, cs, roi, isi, logical(resp1), a1, a2, pmax, a1s, a2s, psync, a2p, pp1, q, sd, ...
-        'VariableNames', {'group', 'filename', 'coverslip', 'roi', 'isi_ms', 'is_responder1', ...
+    T = table(grp, drug, fname, cs, roi, isi, pmode, logical(resp1), a1, a2, pmax, a1s, a2s, psync, a2p, pp1, q, sd, ichk, ...
+        'VariableNames', {'genotype', 'drug', 'filename', 'coverslip', 'roi', 'isi_ms', 'ppf_mode', 'is_responder1', ...
         'peak1_amp', 'peak2_amp', 'ppr_max', 'a1_sync', 'a2_sync', 'ppr_sync', ...
-        'a2_p1lock', 'ppr_p1lock', 'q_pair', 'prestim_sd'});
+        'a2_p1lock', 'ppr_p1lock', 'q_pair', 'prestim_sd', 'isi_check'});
 end
 
-function print_summary_2ap(groups)
-    config = local_config();
+function print_summary_2ap(groups, config)
     fprintf('\n=== 2AP SUMMARY (PPR = A2/A1; per-coverslip mean at each ISI) ===\n');
     fprintf('(Statistical unit = coverslip. Regions/files within a coverslip are\n');
     fprintf(' pseudoreplicates. With 1 animal/genotype these are technical replicates.)\n');
@@ -980,11 +1033,6 @@ function [m, n] = mean_at_rom(M, isiList, isi)
     m = NaN; n = 0;
     k = find(isiList == isi, 1);
     if ~isempty(k), m = M.mean(k); n = M.n_cs(k); end
-end
-
-function c = color_for(name, config)
-    idx = find(strcmp({config.groups.name}, name), 1);
-    if isempty(idx), c = [0.4 0.4 0.4]; else, c = config.groups(idx).color; end
 end
 
 function config = local_config()

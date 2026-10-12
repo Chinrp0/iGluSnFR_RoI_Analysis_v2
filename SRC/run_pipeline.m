@@ -1,18 +1,21 @@
 %% ========================================================================
 %% RUN_PIPELINE - single entry point for 1AP / 2AP / Spont analysis
 %% ========================================================================
-% Analysis mode comes from tracenorm_config.m (config.dataType). The data
-% folder comes from the loader:
+% Everything about the recordings comes from the data folder's Recordings.csv:
+% the paradigm (Experiment column), frame interval, frame counts and stim
+% frames. The folder comes from the loader:
 %   - If `dataset` is in the workspace (from load_dataset or a previous run),
 %     it is used as-is: no dialog, no re-reading of the CSVs.
-%   - Otherwise a folder dialog opens at config.data_root, and for 1AP the
-%     folder (data + Recordings.csv) is loaded into `dataset`, which stays in
-%     the workspace for the next run.
+%   - Otherwise a folder dialog opens at config.data_root and the folder is
+%     loaded into `dataset`, which stays in the workspace for the next run.
 % To switch folders: clear dataset (or run load_dataset again).
 %
-% 1AP: timing (frames, frame interval, stim frames) comes from Recordings.csv.
-% 2AP / Spont: only the folder comes from `dataset`; they still read their
-% files themselves with the legacy exposure in tracenorm_config.m.
+% Paradigm: config.dataType = 'auto' uses the Experiment column (a folder that
+% mixes paradigms is an error); set '1AP' | '2AP' | 'Spont' to insist on one.
+%
+% Files recorded at different frame intervals (e.g. 5 ms and 10 ms PPF in one
+% folder) are analysed as separate sets; with more than one set, each set's
+% figures and tables go in its own sub-folder (e.g. ...\10ms\).
 %
 % spont_batch_analysis() (Spont) already creates ALL its plots, so
 % this script does not recreate any (that caused duplicate figures before).
@@ -22,77 +25,92 @@ clearvars -except dataset; close all; clc;
 
 setup_pipeline
 
-%% --- Mode + groups from tracenorm_config; folder from the loader -----
+%% --- Groups from tracenorm_config; folder + timing from the loader ----
 cfg = tracenorm_config();
 
-has_dataset = exist('dataset', 'var') && isstruct(dataset) && isfield(dataset, 'files');
-if has_dataset
+if exist('dataset', 'var') && isstruct(dataset) && isfield(dataset, 'files')
     fprintf('Using dataset in workspace (loaded %s):\n  %s\n', ...
         char(dataset.loaded_at), dataset.folder);
     fprintf('  (run "clear dataset" to pick a different folder)\n');
-    folder_path = dataset.folder;
 else
-    folder_path = select_data_folder(cfg);
+    dataset = load_dataset_folder(select_data_folder(cfg), cfg);
 end
+if isempty(dataset.files)
+    error('run_pipeline:noFiles', 'No loadable files in %s (see dataset.summary).', dataset.folder);
+end
+
+%% --- Paradigm (from the metadata unless the config insists) -----------
+if numel(dataset.dataType) > 1
+    error('run_pipeline:mixedParadigm', ...
+        'The folder mixes paradigms (%s); analyse them from separate folders.', ...
+        strjoin(dataset.dataType, ', '));
+end
+dataType = dataset.dataType{1};
+if ~strcmpi(cfg.dataType, 'auto') && ~strcmpi(cfg.dataType, dataType)
+    error('run_pipeline:paradigm', ...
+        'tracenorm_config.dataType is %s but Recordings.csv says this folder is %s.', ...
+        cfg.dataType, dataType);
+end
+fprintf('Paradigm (from %s): %s\n', cfg.metadata.filename, dataType);
 
 options = struct();
 options.verbose              = true;
 options.createPlots          = true;
 
-%% --- Run analysis ----------------------------------------------------
-fprintf('\n=== RUNNING ANALYSIS ===\n');
-if strcmpi(cfg.dataType, '1AP')
-    if ~has_dataset
-        dataset = load_dataset_folder(folder_path, cfg);
+%% --- Run analysis, one set per frame interval ------------------------
+parts = split_dataset_by_interval(dataset, cfg);
+base_dir = make_figures_dir(dataset.folder);
+fprintf('Output directory:\n  %s\n', base_dir);
+results_all = cell(1, numel(parts));
+
+for p = 1:numel(parts)
+    part = parts(p);
+    fprintf('\n=== RUNNING %s ANALYSIS (%s, %d files) ===\n', dataType, part.label, numel(part.files));
+    switch dataType
+        case '1AP'
+            res = oneap_batch_analysis(part, options);
+            tables = {res.oneap_metrics_table, 'oneap_per_trial_metrics.csv'; ...
+                      res.oneap_roi_table,     'oneap_per_roi_release.csv'};
+        case '2AP'
+            % Paired-pulse (PPF): PPR vs ISI (per coverslip) + method-comparison montage
+            res = twoap_batch_analysis(part, options);
+            tables = {res.twoap_metrics_table, 'twoap_per_roi_metrics.csv'; ...
+                      res.isi_checks,          'twoap_isi_checks.csv'};
+        case 'Spont'
+            % Spontaneous: genotype x drug groups; core + 7 additional plots per
+            % genotype pair within each drug
+            res = spont_batch_analysis(part, options);
+            tables = {};
     end
-    results = oneap_batch_analysis(dataset, options);
-elseif strcmpi(cfg.dataType, '2AP')
-    % Paired-pulse (PPF): PPR vs ISI (per coverslip) + method-comparison montage
-    % (legacy timing: exposure_ms / stim1_frame from tracenorm_config)
-    results = twoap_batch_analysis(folder_path, options);
-else
-    % Spontaneous: genotype x drug groups; core + 7 additional plots per
-    % genotype pair within each drug (legacy timing)
-    options.frame_rate           = cfg.frame_rate;             % Hz
-    options.recording_duration_s = cfg.recording_duration_s;   % seconds
-    results = spont_batch_analysis(folder_path, options);
-end
+    results_all{p} = res;
 
-fprintf('\n=== Analysis complete ===\n');
-fprintf('Open figures: %d\n', numel(findall(0, 'Type', 'figure')));
-
-%% --- Save all open figures -------------------------------------------
-output_dir = make_figures_dir(folder_path);
-fprintf('Created output directory:\n  %s\n', output_dir);
-n_saved = save_open_figures(output_dir);
-fprintf('Saved %d figures.\n', n_saved);
-
-%% --- Export per-ROI metrics table -------------------------------------
-if strcmpi(cfg.dataType, '1AP') && isfield(results, 'oneap_metrics_table')
-    tables = {results.oneap_metrics_table, 'oneap_per_trial_metrics.csv', 'per-ROI-per-trial'; ...
-              results.oneap_roi_table,     'oneap_per_roi_release.csv',   'per-ROI release'; ...
-              dataset.summary,             'dataset_validation.csv',      'dataset validation'};
+    % Each frame-interval set gets its own sub-folder when there are several.
+    if numel(parts) > 1
+        output_dir = fullfile(base_dir, part.label);
+        if ~isfolder(output_dir), mkdir(output_dir); end
+    else
+        output_dir = base_dir;
+    end
+    n_saved = save_open_figures(output_dir);
+    fprintf('Saved %d figures to:\n  %s\n', n_saved, output_dir);
     for k = 1:size(tables, 1)
         out_csv = fullfile(output_dir, tables{k, 2});
         try
             writetable(tables{k, 1}, out_csv);
-            fprintf('Saved %s table to:\n  %s\n', tables{k, 3}, out_csv);
+            fprintf('Saved %s\n', tables{k, 2});
         catch ME
             fprintf('Could not write %s: %s\n', tables{k, 2}, ME.message);
         end
     end
-elseif strcmpi(cfg.dataType, '2AP') && isfield(results, 'twoap_metrics_table')
-    metrics_csv = fullfile(output_dir, 'twoap_per_roi_metrics.csv');
-    try
-        writetable(results.twoap_metrics_table, metrics_csv);
-        fprintf('Saved per-ROI 2AP metrics to:\n  %s\n', metrics_csv);
-    catch ME
-        fprintf('Could not write metrics table: %s\n', ME.message);
+    if p < numel(parts)
+        close all;   % keep only the last set's figures open
     end
 end
+writetable(dataset.summary, fullfile(base_dir, 'dataset_validation.csv'));
+results = [results_all{:}];   % one element per frame-interval set
 
 %% --- Report ----------------------------------------------------------
 fprintf('\n=== PIPELINE COMPLETE ===\n');
 list_open_figures();
-fprintf('Figures saved to:\n  %s\n', output_dir);
+fprintf('Figures and tables saved to:\n  %s\n', base_dir);
 fprintf('To close all figures: close all\n\n');

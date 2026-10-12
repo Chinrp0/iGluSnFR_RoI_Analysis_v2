@@ -3,16 +3,15 @@ function config = tracenorm_config()
     %
     % RECORDING TIMING COMES FROM THE METADATA, NOT FROM HERE. Every data folder
     % carries a Recordings.csv (written by the Fiji macro) giving, per file, the
-    % number of frames, the frame interval (ms) and the refined stimulus (TTL)
-    % frames. load_dataset_folder() reads it and apply_recording_timing() writes
-    % those values into the config per file/run, so the frame rate, frame count
-    % and stim frame are never hardcoded for 1AP. All analysis windows below are
-    % in MILLISECONDS and converted to frames with the metadata frame interval.
+    % experiment type, number of frames, frame interval (ms) and the refined
+    % stimulus (TTL) frames. load_dataset_folder() reads it and
+    % apply_recording_timing() writes those values into the config per
+    % file/run, so the frame rate, frame count and stim frames are never
+    % hardcoded. All analysis windows below are in MILLISECONDS and converted to
+    % frames with the metadata frame interval.
     %
-    % >>> EDIT PER RUN <<<
-    %   dataType    : '1AP' | '2AP' | 'Spont'
-    % The data folder is NOT set here: load_dataset / run_pipeline ask for
-    % it with a folder dialog that opens at data_root (select_data_folder).
+    % The data folder is NOT set here: load_dataset / run_pipeline ask for it
+    % with a folder dialog that opens at data_root (select_data_folder).
     %
     % Groups are genotype x drug. Genotype is parsed from the filename with the
     % patterns in config.groups (parse_group); drug from the "+drug" token after
@@ -21,22 +20,22 @@ function config = tracenorm_config()
     config = struct();
 
     %% ======================================================================
-    %% ACQUISITION - paradigm selector (EDIT PER RUN) + folder-dialog start
+    %% PARADIGM + folder-dialog start
     %% ======================================================================
-    config.dataType    = '1AP';  % '1AP' | '2AP' | 'Spont'
+    % 'auto' = take the paradigm from the Recordings.csv Experiment column
+    % (1AP -> '1AP', 2AP/PPF -> '2AP', spontaneous -> 'Spont'). Set '1AP' |
+    % '2AP' | 'Spont' to insist on one; a folder of another type then errors.
+    config.dataType    = 'auto';
 
     % Where the folder dialog opens (falls back to the current folder if this
     % drive/path is not available on this PC).
     config.data_root   = 'E:\Data\GluSnFR\Ms\';
 
-    % LEGACY exposure, used ONLY by the 2AP and Spont paths, which have not been
-    % moved onto Recordings.csv yet. The 1AP path ignores it: apply_recording_timing
-    % overwrites exposure_ms / frame_rate / frame_dur_ms from the metadata.
-    config.exposure_ms = 5;      % ms per frame (2AP = 5 ms; spont = 25 ms)
-
-    % --- Derived from exposure_ms (replaced per run by apply_recording_timing) ---
-    config.frame_rate     = 1000 / config.exposure_ms;  % Hz, derived
-    config.frame_dur_ms   = config.exposure_ms;         % ms/frame, alias for readability
+    % Timing placeholders: NaN until apply_recording_timing() fills them from
+    % Recordings.csv, so any code that reads them before that fails visibly.
+    config.exposure_ms    = NaN;    % ms per frame
+    config.frame_rate     = NaN;    % Hz
+    config.frame_dur_ms   = NaN;    % ms per frame (alias)
 
     %% ======================================================================
     %% METADATA (Recordings.csv, see io/read_recordings_metadata.m)
@@ -112,13 +111,19 @@ function config = tracenorm_config()
     %% ======================================================================
     %% 2AP (paired-pulse facilitation, PPF)
     %% ======================================================================
-    % The inter-pulse interval (ISI) is encoded in the filename (e.g. PPF-30ms),
-    % parsed by parse_isi_ms() using isi_pattern. stim2_frame is derived per file:
-    %   stim2_frame = stim1_frame + round(ISI_ms / exposure_ms)
+    % Per file, from Recordings.csv: stim1 = the first refined stim frame, ISI =
+    % PPF_Interval_ms, and
+    %   stim2_frame = stim1_frame + round(ISI_ms / Frame_Interval_ms)
+    % so the two stims are exactly the reported ISI apart (60 ms ISI at 10 ms
+    % frames = 6 frames). When the refined stim2 or the filename ISI disagree with
+    % that, the file is flagged (isi_check) and the ISI-derived stim2 is used.
+    % Each file is cut into an epoch around stim1 (like 1AP trials), so stim1
+    % sits at the same index in every file and traces can be averaged.
     config.twoAP = struct();
-    config.twoAP.expected_frames    = 600;      % Frames per PPF trace (this dataset)
-    config.twoAP.stim1_frame        = 266;      % First pulse frame (shared with 1AP, data-confirmed)
-    config.twoAP.isi_pattern        = 'PPF[\s_\-]*0*(\d+)\s*ms';  % -> ISI in ms from filename
+    config.twoAP.epoch_pre_ms       = 1000;     % Pre-stim1 baseline kept per file
+    config.twoAP.epoch_post_ms      = 2000;     % Post-stim1 trace kept (covers ISI <= 1000 ms
+                                                % + auc_post_ms / montage_post_ms)
+    config.twoAP.isi_pattern        = 'PPF[\s_\-]*0*(\d+)\s*ms';  % ISI in filename (cross-check only)
     config.twoAP.peak_search_ms     = 40;       % Search [0, this] ms after each stim for that pulse's peak
                                                 % (capped at the ISI for pulse 1 so it can't reach pulse 2).
     config.twoAP.auc_post_ms        = 250;      % AUC = TOTAL CHARGE over ONE window that encompasses BOTH
@@ -159,17 +164,14 @@ function config = tracenorm_config()
                                                 % its 99th-pct baseline excursion. Set k=0 to disable.
 
     %% ======================================================================
-    %% Mode-dependent frame count / duration (DERIVED, never a hidden constant)
+    %% Frame count / duration (filled from Recordings.csv by apply_recording_timing)
     %% ======================================================================
-    % 1AP: NaN until apply_recording_timing sets it from Recordings.csv N_Frames.
-    switch upper(config.dataType)
-        case '1AP',   config.expected_frames = NaN;
-        case '2AP',   config.expected_frames = config.twoAP.expected_frames;
-        case 'SPONT', config.expected_frames = 1200;   % 30 s at 25 ms/frame (this dataset)
-        otherwise,    error('tracenorm_config:dataType', ...
-                          'Unknown dataType "%s" (expected 1AP | 2AP | Spont).', config.dataType);
+    if ~any(strcmpi(config.dataType, {'auto', '1AP', '2AP', 'Spont'}))
+        error('tracenorm_config:dataType', ...
+            'Unknown dataType "%s" (expected auto | 1AP | 2AP | Spont).', config.dataType);
     end
-    config.recording_duration_s = config.expected_frames / config.frame_rate;
+    config.expected_frames      = NaN;
+    config.recording_duration_s = NaN;
     config.min_valid_frames     = 400;          % Minimum frames required for baseline calc
 
     %% ======================================================================
@@ -177,7 +179,7 @@ function config = tracenorm_config()
     %% ======================================================================
     config.baseline_method       = 'iterative_rolling_median';
     config.rolling_window_sec    = 0.50;        % Rolling window in seconds
-    config.rolling_window_frames = round(config.rolling_window_sec * config.frame_rate);
+    config.rolling_window_frames = NaN;         % = rolling_window_sec * frame_rate (apply_recording_timing)
     config.outlier_threshold_sigma = 2.0;       % SDs for outlier detection
     config.max_iterations        = 3;           % Refinement iterations
 
@@ -225,7 +227,7 @@ function config = tracenorm_config()
     config.quality.min_snr                = 2.0;
 
     %% ======================================================================
-    %% Temporal (all DERIVED from exposure_ms; no independent time base stored)
+    %% Temporal (filled from Recordings.csv by apply_recording_timing)
     %% ======================================================================
     config.temporal = struct();
     config.temporal.frame_duration_ms    = config.frame_dur_ms;          % = exposure_ms
@@ -285,31 +287,15 @@ function config = tracenorm_config()
     %% ======================================================================
     fprintf('\n=== Configuration Loaded ===\n');
     fprintf('Analysis Mode: %s\n', config.dataType);
-    if strcmpi(config.dataType, '1AP')
-        fprintf('Timing: per file from %s (frames, frame interval, stim frames)\n', ...
-            config.metadata.filename);
-    else
-        fprintf('Exposure: %.3g ms/frame  ->  Frame Rate: %.4g Hz (legacy config value)\n', ...
-            config.exposure_ms, config.frame_rate);
-        fprintf('Recording: %d frames = %.2f s\n', config.expected_frames, config.recording_duration_s);
-    end
+    fprintf('Timing: per file from %s (frames, frame interval, stim frames)\n', ...
+        config.metadata.filename);
     fprintf('Genotypes: %s | Drugs: %s\n', strjoin({config.groups.name}, ', '), ...
         strjoin(config.drugs.order, ', '));
-    if strcmpi(config.dataType, '1AP')
-        fprintf('1AP epochs: -%g..+%g ms per trial, Sync: %d-%d ms, Async: %d-%d ms, Bin: %d ms\n', ...
-            config.oneAP.epoch_pre_ms, config.oneAP.epoch_post_ms, ...
-            config.oneAP.sync_window_ms(1), config.oneAP.sync_window_ms(2), ...
-            config.oneAP.async_window_ms(1), config.oneAP.async_window_ms(2), ...
-            config.oneAP.bin_size_ms);
-    elseif strcmpi(config.dataType, '2AP')
-        fprintf('2AP Stim1 Frame: %d (%.0f ms); ISI parsed per file; peak search %.0f ms\n', ...
-            config.twoAP.stim1_frame, (config.twoAP.stim1_frame - 1) * config.frame_dur_ms, ...
-            config.twoAP.peak_search_ms);
-    else
-        fprintf('Baseline Window: %.0f ms (%d frames); Corrected Schmitt %.1f/%.1f sigma\n', ...
-            config.rolling_window_sec * 1000, config.rolling_window_frames, ...
-            config.corrected_schmitt.upper_threshold_sigma, ...
-            config.corrected_schmitt.lower_threshold_sigma);
-    end
+    fprintf('1AP epochs: -%g..+%g ms per trial | 2AP epochs: -%g..+%g ms around stim1\n', ...
+        config.oneAP.epoch_pre_ms, config.oneAP.epoch_post_ms, ...
+        config.twoAP.epoch_pre_ms, config.twoAP.epoch_post_ms);
+    fprintf('Spont: rolling baseline %.0f ms; Corrected Schmitt %.1f/%.1f sigma\n', ...
+        config.rolling_window_sec * 1000, config.corrected_schmitt.upper_threshold_sigma, ...
+        config.corrected_schmitt.lower_threshold_sigma);
     fprintf('============================\n\n');
 end

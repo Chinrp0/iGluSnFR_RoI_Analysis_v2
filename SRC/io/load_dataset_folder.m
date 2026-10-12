@@ -77,7 +77,7 @@ function dataset = load_dataset_folder(folder, config)
     %% Load + validate each matched file
     loader   = csv_loader_v2();
     files    = struct('name', {}, 'path', {}, 'genotype', {}, 'drug', {}, ...
-        'coverslip', {}, 'region', {}, 'raw', {}, 'meta', {});
+        'coverslip', {}, 'region', {}, 'dataType', {}, 'raw', {}, 'meta', {});
     rejected = struct('name', {}, 'reason', {});
     status   = repmat({'loaded'}, numel(recs), 1);
     status(~in_folder) = {'missing data file'};
@@ -116,6 +116,7 @@ function dataset = load_dataset_folder(folder, config)
         f.drug      = parse_drug(r.mean_csv, config);
         f.coverslip = parse_coverslip_id(r.mean_csv);
         f.region    = parse_region_id(r.mean_csv);
+        f.dataType  = experiment_to_datatype(r.experiment);
         f.raw       = raw;
         f.meta      = r;
         files(end+1) = f; %#ok<AGROW>
@@ -129,9 +130,10 @@ function dataset = load_dataset_folder(folder, config)
     rois_col   = [[recs.n_rois]';   nan(numel(orphan_files), 1)];
     fi_col     = [[recs.frame_interval_ms]'; nan(numel(orphan_files), 1)];
     trials_col = [[recs.n_trials]'; nan(numel(orphan_files), 1)];
+    exp_col    = [{recs.experiment}'; repmat({''}, numel(orphan_files), 1)];
     nflag_col  = [cellfun(@numel, {recs.flags})'; nan(numel(orphan_files), 1)];
-    summary = table(file_col, frames_col, rois_col, fi_col, trials_col, nflag_col, status_col, ...
-        'VariableNames', {'file', 'n_frames', 'n_rois', 'frame_interval_ms', ...
+    summary = table(file_col, exp_col, frames_col, rois_col, fi_col, trials_col, nflag_col, status_col, ...
+        'VariableNames', {'file', 'experiment', 'n_frames', 'n_rois', 'frame_interval_ms', ...
         'n_trials', 'n_flags', 'status'});
 
     dataset = struct();
@@ -139,6 +141,8 @@ function dataset = load_dataset_folder(folder, config)
     dataset.metadata_file = meta_path;
     dataset.loaded_at     = datetime('now');
     dataset.files         = files;
+    % Paradigm(s) present, from the Experiment column (run_pipeline requires one).
+    if isempty(files), dataset.dataType = {}; else, dataset.dataType = unique({files.dataType}, 'stable'); end
     dataset.recordings    = recs;
     dataset.validation    = struct('missing_data', {missing_data}, ...
         'orphan_files', {orphan_files}, 'rejected', rejected);
@@ -154,11 +158,17 @@ end
 
 function reason = check_metadata_row(r)
     % Timing fields the pipeline relies on must be present and self-consistent.
+    % Stim frames are required for evoked paradigms only (spontaneous has none).
     reason = '';
-    if ~(isfinite(r.n_frames) && r.n_frames >= 1)
+    dt = experiment_to_datatype(r.experiment);
+    if isempty(dt)
+        reason = sprintf('Experiment "%s" has no analysis path', r.experiment);
+    elseif ~(isfinite(r.n_frames) && r.n_frames >= 1)
         reason = 'N_Frames is NA/invalid';
     elseif ~(isfinite(r.frame_interval_ms) && r.frame_interval_ms > 0)
         reason = 'Frame_Interval_ms is NA/invalid';
+    elseif strcmp(dt, 'Spont')
+        return;
     elseif isempty(r.stim_frames) || any(~isfinite(r.stim_frames))
         reason = 'Stim_Frames_Refined is NA/invalid';
     elseif any(r.stim_frames < 1 | r.stim_frames > r.n_frames)
