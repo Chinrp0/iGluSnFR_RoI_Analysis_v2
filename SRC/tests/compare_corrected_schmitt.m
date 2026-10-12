@@ -18,7 +18,7 @@ function setup_pipeline()
     
     modules = {
         'csv_loader_v2', 'io/csv_loader_v2.m';
-        'spont_pipeline', 'spont_pipeline.m';
+        'spont_pipeline', 'pipelines/spont_pipeline.m';
         'tracenorm_config', 'config/tracenorm_config.m';
         'baseline_detector', 'tracenorm/baseline_detector.m';
         'dfof_calculator', 'tracenorm/dfof_calculator.m';

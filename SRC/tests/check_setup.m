@@ -16,7 +16,7 @@ expected_files = {
     'tracenorm/dfof_calculator.m',
     'visualization/baseline_plotter.m',
     'io/csv_loader_v2.m',
-    'spont_pipeline.m'
+    'pipelines/spont_pipeline.m'
 };
 
 fprintf('\nChecking required files:\n');

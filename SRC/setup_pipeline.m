@@ -5,8 +5,8 @@ function setup_pipeline()
     
     fprintf('=== Setting up Fluorescent Imaging Pipeline with Corrected Schmitt Trigger ===\n');
     
-    % Get the current directory (should be SRC folder)
-    srcPath = pwd;
+    % SRC = the folder this file lives in, so setup works from any current folder
+    srcPath = fileparts(mfilename('fullpath'));
     fprintf('Source directory: %s\n', srcPath);
     
     % Add all subfolders to MATLAB path recursively
@@ -18,7 +18,7 @@ function setup_pipeline()
     
     modules = {
         'csv_loader_v2', 'io/csv_loader_v2.m';
-        'spont_pipeline', 'spont_pipeline.m';
+        'spont_pipeline', 'pipelines/spont_pipeline.m';
         'tracenorm_config', 'config/tracenorm_config.m';
         'baseline_detector', 'tracenorm/baseline_detector.m';
         'dfof_calculator', 'tracenorm/dfof_calculator.m';
@@ -29,15 +29,20 @@ function setup_pipeline()
         'prestim_baseline', 'tracenorm/prestim_baseline.m';            % 1AP: pre-stim baseline
         'oneap_analyzer', 'tracenorm/oneap_analyzer.m';                % 1AP: per-ROI metrics
         'fit_decay_double', 'tracenorm/fit_decay_double.m';            % 1AP: averaged double-exp decay
-        'oneap_pipeline', 'oneap_pipeline.m';                          % 1AP: single-file path
-        'oneap_batch_analysis', 'oneap_batch_analysis.m';             % 1AP: batch driver
+        'oneap_pipeline', 'pipelines/oneap_pipeline.m';                          % 1AP: single-file path
+        'oneap_batch_analysis', 'pipelines/oneap_batch_analysis.m';             % 1AP: batch driver
         'twoap_analyzer', 'tracenorm/twoap_analyzer.m';                % 2AP: per-ROI PPR metrics
-        'twoap_pipeline', 'twoap_pipeline.m';                          % 2AP: single-file path
-        'twoap_batch_analysis', 'twoap_batch_analysis.m';             % 2AP: batch driver (PPR vs ISI)
+        'twoap_pipeline', 'pipelines/twoap_pipeline.m';                          % 2AP: single-file path
+        'twoap_batch_analysis', 'pipelines/twoap_batch_analysis.m';             % 2AP: batch driver (PPR vs ISI)
         'load_dataset_folder', 'io/load_dataset_folder.m';             % loader: data + Recordings.csv
         'read_recordings_metadata', 'io/read_recordings_metadata.m';   % loader: metadata parser
         'select_data_folder', 'io/select_data_folder.m';               % loader: folder dialog
         'apply_recording_timing', 'config/apply_recording_timing.m';   % metadata timing -> config
+        'experiment_to_datatype', 'io/experiment_to_datatype.m';       % loader: paradigm from metadata
+        'split_dataset_by_interval', 'io/split_dataset_by_interval.m'; % loader: one set per frame interval
+        'genotype_drug_order', 'io/genotype_drug_order.m';             % shared: genotype x drug order
+        'group_color', 'visualization/group_color.m';                  % shared: genotype x drug colour
+        'spont_group_labels', 'visualization/spont_group_labels.m';    % spont: pair labels/colours
         'parse_drug', 'io/parse_drug.m';                               % shared: drug from filename
         'parse_group', 'io/parse_group.m';                             % shared: config-driven group parse
         'parse_coverslip_id', 'io/parse_coverslip_id.m';               % shared: coverslip id
@@ -123,24 +128,18 @@ function setup_pipeline()
     
     if ~allModulesFound
         fprintf('\n=== Setup Issues Found ===\n');
-        fprintf('Please check that you are in the SRC directory and all modules exist.\n');
+        fprintf('Please check that all modules exist.\n');
         fprintf('Expected folder structure:\n');
         fprintf('  SRC/\n');
-        fprintf('    ├── spont_pipeline.m\n');
-        fprintf('    ├── config/\n');
-        fprintf('    │   └── tracenorm_config.m\n');
-        fprintf('    ├── tracenorm/\n');
-        fprintf('    │   ├── baseline_detector.m\n');
-        fprintf('    │   ├── dfof_calculator.m\n');
-        fprintf('    │   ├── corrected_schmitt_detector.m     ← NEW: Proper noise estimation\n');
-        fprintf('    │   ├── pure_schmitt_trigger_detector.m  ← Legacy for comparison\n');
-        fprintf('    │   └── quality_assessor.m\n');
-        fprintf('    ├── visualization/\n');
-        fprintf('    │   └── baseline_plotter_clean.m\n');
-        fprintf('    ├── tests/\n');
-        fprintf('    │   └── compare_schmitt_implementations.m  ← NEW: Compare methods\n');
-        fprintf('    └── io/\n');
-        fprintf('        └── csv_loader_v2.m\n');
+        fprintf('    ├── run_pipeline.m, load_dataset.m, setup_pipeline.m   (entry points)\n');
+        fprintf('    ├── pipelines/      1AP / 2AP / Spont batch drivers + per-file pipelines\n');
+        fprintf('    ├── config/         tracenorm_config.m, apply_recording_timing.m\n');
+        fprintf('    ├── io/             loader, Recordings.csv parser, filename parsers, output\n');
+        fprintf('    ├── tracenorm/      baseline, dF/F, detectors, analyzers\n');
+        fprintf('    ├── visualization/  plot modules and figure helpers\n');
+        fprintf('    ├── tests/          test and diagnostic scripts\n');
+        fprintf('    ├── legacy/         superseded code (kept for reference)\n');
+        fprintf('    └── docs/           notes and guides\n');
     else
         % Display algorithm summary
         fprintf('\n=== Algorithm Summary ===\n');
