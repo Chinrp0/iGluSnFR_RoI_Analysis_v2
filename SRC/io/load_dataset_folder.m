@@ -14,6 +14,10 @@ function dataset = load_dataset_folder(folder, config)
     %   rejected      - matched file that failed to load or whose frames / ROIs
     %                   disagree with N_Frames / N_ROIs, or whose stim frames are
     %                   missing / out of range
+    % Stim frames: check_stim_frames compares the refined and TTL frames with the
+    % ROIs' response onset and switches a trial to TTL only when the refined
+    % frame is impossible; overrides are printed, added to the file's flags and
+    % listed in the summary's stim_check column.
     %
     % Inputs:
     %   folder - raw-mean folder (holds the _mean.csv files and Recordings.csv)
@@ -80,6 +84,7 @@ function dataset = load_dataset_folder(folder, config)
         'coverslip', {}, 'region', {}, 'dataType', {}, 'raw', {}, 'meta', {});
     rejected = struct('name', {}, 'reason', {});
     status   = repmat({'loaded'}, numel(recs), 1);
+    stim_note = repmat({''}, numel(recs), 1);
     status(~in_folder) = {'missing data file'};
 
     for i = find(in_folder)
@@ -109,6 +114,20 @@ function dataset = load_dataset_folder(folder, config)
             continue;
         end
 
+        % Refined vs TTL stim frames, decided from the ROIs' own response onset
+        % (the refined frame comes from the full field of view).
+        if ~strcmp(experiment_to_datatype(r.experiment), 'Spont')
+            [r_chk, stim_note{i}] = check_stim_frames(raw, r, config);
+            if isempty(check_metadata_row(r_chk))
+                r = r_chk;
+            else
+                stim_note{i} = [stim_note{i} ' (TTL frames invalid, refined kept)'];
+            end
+            if ~isempty(stim_note{i})
+                fprintf('  Stim check %s: %s\n', r.mean_csv, stim_note{i});
+            end
+        end
+
         f = struct();
         f.name      = r.mean_csv;
         f.path      = fpath;
@@ -132,9 +151,10 @@ function dataset = load_dataset_folder(folder, config)
     trials_col = [[recs.n_trials]'; nan(numel(orphan_files), 1)];
     exp_col    = [{recs.experiment}'; repmat({''}, numel(orphan_files), 1)];
     nflag_col  = [cellfun(@numel, {recs.flags})'; nan(numel(orphan_files), 1)];
-    summary = table(file_col, exp_col, frames_col, rois_col, fi_col, trials_col, nflag_col, status_col, ...
+    stim_col   = [stim_note; repmat({''}, numel(orphan_files), 1)];
+    summary = table(file_col, exp_col, frames_col, rois_col, fi_col, trials_col, nflag_col, status_col, stim_col, ...
         'VariableNames', {'file', 'experiment', 'n_frames', 'n_rois', 'frame_interval_ms', ...
-        'n_trials', 'n_flags', 'status'});
+        'n_trials', 'n_flags', 'status', 'stim_check'});
 
     dataset = struct();
     dataset.folder        = folder;

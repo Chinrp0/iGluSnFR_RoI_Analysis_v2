@@ -25,12 +25,15 @@ function [baseline, baseline_stats] = prestim_baseline(raw_data, config)
     [numFrames, numROIs] = size(raw_data);
 
     % The pre-stim window ends just before the FIRST stimulus. Pick the stim
-    % frame / guard from the active paradigm so 1AP and 2AP (PPF) share this code
-    % (2AP baselines off the first pulse, stim1_frame).
+    % frame / guard from the active paradigm so 1AP, 2AP (PPF) and HFS share this
+    % code (2AP and HFS baseline off the first pulse, stim1_frame).
     switch upper(config.dataType)
         case '2AP'
             stim_frame = config.twoAP.stim1_frame;
             guard_ms   = config.twoAP.baseline_guard_ms;
+        case 'HFS'
+            stim_frame = config.hfs.stim1_frame;
+            guard_ms   = config.hfs.baseline_guard_ms;
         otherwise   % '1AP'
             stim_frame = config.oneAP.stim_frame;
             guard_ms   = config.oneAP.baseline_guard_ms;

@@ -3,14 +3,17 @@ function dt = experiment_to_datatype(experiment)
     %
     %   '1AP' (incl. multi-trial 5AP files)    -> '1AP'
     %   '2AP' / 'PPF'                          -> '2AP'
+    %   'HFS' (high-frequency train)           -> 'HFS'
     %   'spontaneous' / 'spont'                -> 'Spont'
-    % Anything else (e.g. HFS trains) has no analysis path yet and returns ''.
+    % Anything else has no analysis path yet and returns ''.
 
     e = lower(strtrim(char(experiment)));
     if any(strcmp(e, {'1ap'}))
         dt = '1AP';
     elseif any(strcmp(e, {'2ap', 'ppf'}))
         dt = '2AP';
+    elseif strcmp(e, 'hfs')
+        dt = 'HFS';
     elseif startsWith(e, 'spont')
         dt = 'Spont';
     else

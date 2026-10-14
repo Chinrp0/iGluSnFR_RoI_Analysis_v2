@@ -1,5 +1,5 @@
 %% ========================================================================
-%% RUN_PIPELINE - single entry point for 1AP / 2AP / Spont analysis
+%% RUN_PIPELINE - single entry point for 1AP / 2AP / HFS / Spont analysis
 %% ========================================================================
 % Everything about the recordings comes from the data folder's Recordings.csv:
 % the paradigm (Experiment column), frame interval, frame counts and stim
@@ -11,7 +11,7 @@
 % To switch folders: clear dataset (or run load_dataset again).
 %
 % Paradigm: config.dataType = 'auto' uses the Experiment column (a folder that
-% mixes paradigms is an error); set '1AP' | '2AP' | 'Spont' to insist on one.
+% mixes paradigms is an error); set '1AP' | '2AP' | 'HFS' | 'Spont' to insist on one.
 %
 % Files recorded at different frame intervals (e.g. 5 ms and 10 ms PPF in one
 % folder) are analysed as separate sets; with more than one set, each set's
@@ -76,6 +76,16 @@ for p = 1:numel(parts)
             res = twoap_batch_analysis(part, options);
             tables = {res.twoap_metrics_table, 'twoap_per_roi_metrics.csv'; ...
                       res.isi_checks,          'twoap_isi_checks.csv'};
+        case 'HFS'
+            % High-frequency train: per-pulse phasic / tonic + train charge, plateau,
+            % decay, from per-coverslip average traces
+            res = hfs_batch_analysis(part, options);
+            tables = {res.hfs_roi_table,       'hfs_per_roi_metrics.csv'; ...
+                      res.hfs_pulse_table,     'hfs_per_pulse.csv'; ...
+                      res.hfs_coverslip_table, 'hfs_per_coverslip.csv'; ...
+                      res.file_checks,         'hfs_file_checks.csv'};
+            % No per-pulse table when single pulses are not resolvable (e.g. 25 ms frames)
+            tables = tables(~cellfun(@(t) width(t) == 0, tables(:, 1)), :);
         case 'Spont'
             % Spontaneous: genotype x drug groups; core + 7 additional plots per
             % genotype pair within each drug

@@ -35,6 +35,12 @@ function setup_pipeline()
         'twoap_residual_window', 'tracenorm/twoap_residual_window.m';  % 2AP: pulse-2 residual frames
         'twoap_pipeline', 'pipelines/twoap_pipeline.m';                          % 2AP: single-file path
         'twoap_batch_analysis', 'pipelines/twoap_batch_analysis.m';             % 2AP: batch driver (PPR vs ISI)
+        'hfs_analyzer', 'tracenorm/hfs_analyzer.m';                    % HFS: per-ROI train metrics
+        'hfs_train_metrics', 'tracenorm/hfs_train_metrics.m';          % HFS: per-pulse / train metrics of a trace
+        'hfs_pulses_resolvable', 'tracenorm/hfs_pulses_resolvable.m';  % HFS: enough frames per pulse?
+        'apply_train_timing', 'config/apply_train_timing.m';           % HFS: pulse frames from Train_Pulses/Hz
+        'hfs_pipeline', 'pipelines/hfs_pipeline.m';                              % HFS: single-file path
+        'hfs_batch_analysis', 'pipelines/hfs_batch_analysis.m';                 % HFS: batch driver
         'load_dataset_folder', 'io/load_dataset_folder.m';             % loader: data + Recordings.csv
         'read_recordings_metadata', 'io/read_recordings_metadata.m';   % loader: metadata parser
         'select_data_folder', 'io/select_data_folder.m';               % loader: folder dialog
@@ -44,6 +50,7 @@ function setup_pipeline()
         'genotype_drug_order', 'io/genotype_drug_order.m';             % shared: genotype x drug order
         'group_color', 'visualization/group_color.m';                  % shared: genotype x drug colour
         'spont_group_labels', 'visualization/spont_group_labels.m';    % spont: pair labels/colours
+        'check_stim_frames', 'io/check_stim_frames.m';                 % loader: refined vs TTL stim frames
         'parse_drug', 'io/parse_drug.m';                               % shared: drug from filename
         'parse_group', 'io/parse_group.m';                             % shared: config-driven group parse
         'parse_coverslip_id', 'io/parse_coverslip_id.m';               % shared: coverslip id

@@ -23,8 +23,8 @@ function config = tracenorm_config()
     %% PARADIGM + folder-dialog start
     %% ======================================================================
     % 'auto' = take the paradigm from the Recordings.csv Experiment column
-    % (1AP -> '1AP', 2AP/PPF -> '2AP', spontaneous -> 'Spont'). Set '1AP' |
-    % '2AP' | 'Spont' to insist on one; a folder of another type then errors.
+    % (1AP -> '1AP', 2AP/PPF -> '2AP', HFS -> 'HFS', spontaneous -> 'Spont'). Set
+    % '1AP' | '2AP' | 'HFS' | 'Spont' to insist on one; a folder of another type then errors.
     config.dataType    = 'auto';
 
     % Where the folder dialog opens (falls back to the current folder if this
@@ -48,6 +48,18 @@ function config = tracenorm_config()
     config.metadata.interval_tol_frac = 0.001;     % Files pooled in one run must
                                                    % share Frame_Interval_ms to
                                                    % within this fraction.
+    % Refined vs TTL stim frames (io/check_stim_frames.m). The macro refines each
+    % TTL frame from the FULL field of view; the loader checks it against the
+    % analysed ROIs' response onset and switches a trial to the TTL frame only
+    % when the refined frame is impossible (response starts before it, or more
+    % than max_onset_latency_ms after it) and the TTL frame is consistent.
+    config.metadata.stim_check = struct( ...
+        'enabled',              true, ...
+        'onset_sigma',          4, ...    % onset = ROI-mean dF/F above this many noise SD
+        'min_frames_above',     2, ...    % ...for this many consecutive frames
+        'max_onset_latency_ms', 20, ...   % response must start within this of the stim
+        'search_back_ms',       30, ...   % onset searched from this before the earlier candidate
+        'ref_ms',               200);     % pre-window for the dF/F reference level and noise
 
     %% ======================================================================
     %% GROUPS - config-driven, fail-loud parsing (see io/parse_group.m)
@@ -170,11 +182,61 @@ function config = tracenorm_config()
                                                 % its 99th-pct baseline excursion. Set k=0 to disable.
 
     %% ======================================================================
+    %% HFS (high-frequency stimulation train, e.g. 50 AP at 20 Hz)
+    %% ======================================================================
+    % Per file, from Recordings.csv: stim1 = the first refined stim frame, and
+    % Train_Pulses / Train_Hz give the train. Pulse n sits at
+    %   stim1 + round((n-1) * (1000/Train_Hz) / Frame_Interval_ms)
+    % (rounded from the start of the train, so 50 pulses do not accumulate
+    % rounding drift). Each file is cut into an epoch around stim1, like 2AP.
+    %
+    % Each pulse is split into a PHASIC part (the fast peak it adds) and a TONIC
+    % part (the level the trace has built up to just before it fires: residual
+    % from earlier pulses + asynchronous release):
+    %   tonic T_n  = mean of the last residual_window_ms before pulse n, above
+    %                the pre-train baseline
+    %   phasic A_n = max in [pulse n, pulse n + peak_search_ms] (capped one frame
+    %                before pulse n+1) minus that pre-pulse level
+    % Per-pulse metrics need at least min_frames_per_pulse frames per pulse; at
+    % 20 Hz that is fine at 5 ms frames (10 frames/pulse) but not at 25 ms (2),
+    % where only the train-level metrics (charge, plateau, decay) are computed.
+    % The primary per-pulse and train metrics are measured on each coverslip's
+    % grand-average trace (all QC-passed ROIs, no responder gating), the same
+    % ratio-of-means basis as 2AP.
+    config.hfs = struct();
+    config.hfs.epoch_pre_ms          = 1000;  % Pre-train baseline kept per file
+    config.hfs.post_train_ms         = 1500;  % Kept after the train ends (decay); NaN-padded
+                                              % where the recording is shorter
+    config.hfs.baseline_guard_ms     = 100;   % Time before stim1 dropped from baseline
+    config.hfs.peak_search_ms        = 50;    % Phasic peak searched in [0, this] ms after each
+                                              % pulse (capped one frame before the next pulse)
+    config.hfs.residual_window_ms    = 10;    % Pre-pulse (tonic) level = mean over the last this-many
+                                              % ms before each pulse (>= 1 frame; same as 2AP)
+    config.hfs.min_frames_per_pulse  = 4;     % Below this, per-pulse metrics are not computed
+    config.hfs.steady_state_pulses   = 10;    % Steady state = mean of the last this-many pulses
+    config.hfs.cumulative_fit_pulses = 20;    % Cumulative phasic amplitude: line fitted to the last
+                                              % this-many pulses and back-extrapolated to pulse 0.
+                                              % Intercept ~ releasable pool, slope ~ replenishment
+                                              % per pulse (both in dF/F, iGluSnFR proxies).
+    config.hfs.auc_post_ms           = 250;   % Train charge = integral over [stim1, train end + this]
+    config.hfs.plateau_window_ms     = 500;   % Plateau = mean dF/F over the last this-many ms of the
+                                              % train (frame-rate independent; works at 25 ms too)
+    config.hfs.decay_window_ms       = 1000;  % Post-train decay fitted over this window
+    config.hfs.decay_min_r2          = 0.5;   % Min R^2 to keep the post-train decay tau
+    config.hfs.min_peak_latency_ms   = 5;     % File check: median phasic peak latency within this of
+                                              % 0 ms or of the per-pulse window end means the peaks are
+                                              % pinned to the window edge, i.e. the stim frames are off
+                                              % by a few frames (see Refine_Shift_Frames)
+    config.hfs.upper_threshold_sigma = 3.5;   % Responder: smoothed train response must clear
+    config.hfs.responder_smooth_ms   = 25;    % this many SD of the equally smoothed pre-stim trace
+    config.hfs.max_noise_sd          = 0.02;  % Drop ROIs whose pre-stim robust SD exceeds this
+
+    %% ======================================================================
     %% Frame count / duration (filled from Recordings.csv by apply_recording_timing)
     %% ======================================================================
-    if ~any(strcmpi(config.dataType, {'auto', '1AP', '2AP', 'Spont'}))
+    if ~any(strcmpi(config.dataType, {'auto', '1AP', '2AP', 'HFS', 'Spont'}))
         error('tracenorm_config:dataType', ...
-            'Unknown dataType "%s" (expected auto | 1AP | 2AP | Spont).', config.dataType);
+            'Unknown dataType "%s" (expected auto | 1AP | 2AP | HFS | Spont).', config.dataType);
     end
     config.expected_frames      = NaN;
     config.recording_duration_s = NaN;
@@ -307,6 +369,8 @@ function config = tracenorm_config()
     fprintf('1AP epochs: -%g..+%g ms per trial | 2AP epochs: -%g..+%g ms around stim1\n', ...
         config.oneAP.epoch_pre_ms, config.oneAP.epoch_post_ms, ...
         config.twoAP.epoch_pre_ms, config.twoAP.epoch_post_ms);
+    fprintf('HFS epochs: -%g ms .. train end +%g ms | per-pulse needs >= %d frames/pulse\n', ...
+        config.hfs.epoch_pre_ms, config.hfs.post_train_ms, config.hfs.min_frames_per_pulse);
     fprintf('Spont: rolling baseline %.0f ms; Corrected Schmitt %.1f/%.1f sigma\n', ...
         config.rolling_window_sec * 1000, config.corrected_schmitt.upper_threshold_sigma, ...
         config.corrected_schmitt.lower_threshold_sigma);
