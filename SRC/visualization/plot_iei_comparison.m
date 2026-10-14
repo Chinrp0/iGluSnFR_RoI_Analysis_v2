@@ -127,7 +127,7 @@ function fig = plot_iei_comparison(results, options)
         line([1, 1], [y_text*0.95, y_text*0.9], 'Color', 'k', 'LineWidth', 1);
         line([2, 2], [y_text*0.95, y_text*0.9], 'Color', 'k', 'LineWidth', 1);
         
-        ylim([min(all_ieis) - y_range*0.05, y_text + y_range*0.05]);
+        ylim([0, y_text + y_range*0.05]);
     end
     
     %% Subplot 5: Coefficient of Variation

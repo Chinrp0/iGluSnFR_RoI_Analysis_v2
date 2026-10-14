@@ -156,7 +156,7 @@ function plot_metric_comparison(wt_data, mut_data, wt_label, mut_label, ylabel_t
         line([1, 1], [y_text * 0.95, y_text * 0.90], 'Color', 'k', 'LineWidth', 1);
         line([2, 2], [y_text * 0.95, y_text * 0.90], 'Color', 'k', 'LineWidth', 1);
         
-        ylim([y_min - y_range * 0.05, y_text + y_range * 0.05]);
+        ylim([0, y_text + y_range * 0.05]);
     end
 end
 

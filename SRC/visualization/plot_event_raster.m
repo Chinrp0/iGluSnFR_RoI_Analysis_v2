@@ -5,19 +5,18 @@ function fig = plot_event_raster(results, options)
     %
     % Args:
     %   results - Output from spont_batch_analysis()
-    %   options - Optional struct with:
-    %             .frame_rate (default: 100 Hz)
-    %             .max_rois_per_plot (default: 100, subsample if more)
-    %             .recording_duration_s (default: 30s)
+    %   options - Struct with (all required; from the metadata and
+    %             config.visualization.spont):
+    %             .frame_rate           (Hz)
+    %             .recording_duration_s (s)
+    %             .max_rois_per_plot    (subsample if more)
+    %             .rate_bin_s           (population-rate bin, s)
     
-    if nargin < 2
-        options = struct();
+    required = {'frame_rate', 'recording_duration_s', 'max_rois_per_plot', 'rate_bin_s'};
+    if nargin < 2 || ~all(isfield(options, required))
+        error('plot_event_raster:options', 'options must define: %s (spont_batch_analysis sets them).', ...
+            strjoin(required, ', '));
     end
-    
-    % Set defaults
-    if ~isfield(options, 'frame_rate'), options.frame_rate = 100; end
-    if ~isfield(options, 'max_rois_per_plot'), options.max_rois_per_plot = 100; end
-    if ~isfield(options, 'recording_duration_s'), options.recording_duration_s = 30; end
     
     fprintf('Creating event timing raster plots...\n');
     
@@ -96,7 +95,7 @@ function plot_population_rate(raster_data, stats, condition_name, color, options
     end
     
     % Bin events into time windows
-    bin_size_s = 1.0;  % 1 second bins
+    bin_size_s = options.rate_bin_s;
     time_edges = 0:bin_size_s:options.recording_duration_s;
     event_counts = zeros(1, length(time_edges) - 1);
     

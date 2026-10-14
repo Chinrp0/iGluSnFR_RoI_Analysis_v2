@@ -5,10 +5,19 @@ function fig = plot_roi_recruitment_curves(results, options)
     %
     % Args:
     %   results - Output from spont_batch_analysis()
-    %   options - Optional struct with plotting preferences
+    %   options - Struct with (required; from config.visualization.spont):
+    %             .thresholds_hz     - frequency grid for the recruitment curves
+    %             .key_thresholds_hz - grid values listed in the summary table
     
-    if nargin < 2
-        options = struct();
+    required = {'thresholds_hz', 'key_thresholds_hz'};
+    if nargin < 2 || ~all(isfield(options, required))
+        error('plot_roi_recruitment_curves:options', ...
+            'options must define: %s (see config.visualization.spont).', strjoin(required, ', '));
+    end
+    off_grid = setdiff(options.key_thresholds_hz, options.thresholds_hz);
+    if ~isempty(off_grid)
+        error('plot_roi_recruitment_curves:keyThresholds', ...
+            'Key thresholds %s Hz are not on recruitment_thresholds_hz.', mat2str(off_grid));
     end
     
     fprintf('Creating ROI recruitment curves...\n');
@@ -24,7 +33,7 @@ function fig = plot_roi_recruitment_curves(results, options)
     fprintf(['  ' lblB ': %d total ROIs\n'], mut_n_total);
     
     %% Define frequency thresholds
-    thresholds = [0, 0.005, 0.01, 0.015, 0.02, 0.025, 0.03, 0.04, 0.05, 0.075, 0.1, 0.15, 0.2];
+    thresholds = options.thresholds_hz(:)';
     
     %% Calculate recruitment at each threshold
     wt_recruitment_count = zeros(size(thresholds));
@@ -106,7 +115,7 @@ function fig = plot_roi_recruitment_curves(results, options)
     subplot(2, 3, 6); axis off;
     
     % Define key thresholds
-    key_thresholds = [0.01, 0.02, 0.05, 0.1];
+    key_thresholds = options.key_thresholds_hz;
     
     summary_text = {
         'RECRUITMENT AT KEY THRESHOLDS';

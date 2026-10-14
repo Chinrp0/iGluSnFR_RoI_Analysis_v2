@@ -5,17 +5,12 @@ function fig = plot_amplitude_frequency_correlation(results, options)
     %
     % Args:
     %   results - Output from spont_batch_analysis()
-    %   options - Optional struct with:
-    %             .frame_rate (default: 100 Hz)
-    %             .recording_duration_s (default: 30s)
+    %   options - Unused (kept for call compatibility); frequencies and
+    %             amplitudes come precomputed in the file results.
     
     if nargin < 2
         options = struct();
     end
-    
-    % Set defaults
-    if ~isfield(options, 'frame_rate'), options.frame_rate = 100; end
-    if ~isfield(options, 'recording_duration_s'), options.recording_duration_s = 30; end
     
     fprintf('Creating amplitude-frequency correlation analysis...\n');
     

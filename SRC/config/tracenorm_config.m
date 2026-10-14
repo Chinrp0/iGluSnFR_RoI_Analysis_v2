@@ -31,6 +31,12 @@ function config = tracenorm_config()
     % drive/path is not available on this PC).
     config.data_root   = 'E:\Data\GluSnFR\Ms\';
 
+    % Keep the loaded `dataset` in the workspace after run_pipeline finishes?
+    %   true  - the next run_pipeline reuses it (no dialog, no re-reading CSVs)
+    %   false - it is cleared at the end of the run, so the next run asks for a
+    %           folder again and frees the memory (~100 MB for a 5AP folder)
+    config.keep_dataset = false;
+
     % Timing placeholders: NaN until apply_recording_timing() fills them from
     % Recordings.csv, so any code that reads them before that fails visibly.
     config.exposure_ms    = NaN;    % ms per frame
@@ -320,6 +326,16 @@ function config = tracenorm_config()
     config.visualization = struct();
     config.visualization.plot_baseline = true;
     config.visualization.plot_events   = true;
+    % Start every data figure's y-axis at 0 (applied to all open figures after
+    % each run, before saving). Skips log-scale and image axes. dF/F trace axes
+    % get their own floor so the negative baseline noise stays visible.
+    % y_min_zero = false leaves each figure's own limits.
+    config.visualization.y_min_zero      = true;
+    config.visualization.ymin_montage    = -0.02;   % per-ROI trace montages / example traces
+    config.visualization.ymin_mean_trace = -0.005;  % group / coverslip mean traces
+    % Print "Frame time: <ms> ms (<Hz> Hz)" (from Recordings.csv) in the corner
+    % of every figure with a time axis or time-based metric (annotate_frame_time).
+    config.visualization.show_frame_time = true;
     % Legacy convenience aliases; group colors are the source of truth in
     % config.groups (use color_for/parse_group). Default to the WT/R213W groups,
     % falling back to the first two configured groups so older plotters keep
@@ -349,7 +365,37 @@ function config = tracenorm_config()
     %   e.g. [0 600] = whole trace   |   [200 500] = zoom around the stim
     config.visualization.x_axis.range_frames         = [];   % avg-trace (wide time figure)
     % For 1AP these are frames WITHIN a trial epoch (stim at epoch_pre_ms).
-    config.visualization.x_axis.montage_range_frames = [];   % per-panel ROI montage window
+    config.visualization.x_axis.montage_range_frames = [40 300];   % per-panel ROI montage window
+
+    % --- ROI montages (1AP / 2AP example-trace grids) -------------------------
+    config.visualization.montage = struct();
+    config.visualization.montage.columns                 = 4;    % Panels per row
+    config.visualization.montage.rows                    = [];   % Rows per figure ([] = all ROIs on one figure;
+                                                                 % set: extra ROIs continue on further figures)
+    config.visualization.montage.oneAP_max_rois          = 24;   % 1AP montage (responders first)
+    config.visualization.montage.oneAP_marginal_max_rois = 24;   % 1AP marginal-responder montage
+    config.visualization.montage.twoAP_max_rois          = 20;   % 2AP method-comparison montage
+    config.visualization.montage.oneAP_ylim     = [-0.02 0.06];  % Shared dF/F y-range ([] = auto per panel);
+                                                                 % the top rises for traces that go above it
+    config.visualization.montage.oneAP_pre_ms   = 150;  % Default window shown before the stim (resting noise)
+    config.visualization.montage.oneAP_post_extra_ms = 150;   % ...and after the async window end
+                                                             % (x_axis.montage_range_frames overrides both)
+
+    % --- Spontaneous figures ---------------------------------------------------
+    config.visualization.spont = struct();
+    config.visualization.spont.freq_bin_hz         = 0.02;  % Event-frequency histogram bin (Hz)
+    config.visualization.spont.box_max_points      = 5000;  % Amplitude box plot: random subsample above this
+    config.visualization.spont.random_seed         = 1;     % Seed for that subsample (reproducible figures)
+    config.visualization.spont.activity_bin_edges  = [1 2 4 6 8 10];  % Events/ROI categories: [1], [2-3],
+                                                             % [4-5], [6-7], [8-9], [10+]
+    config.visualization.spont.raster_max_rois     = 100;   % Event raster: evenly subsample above this
+    config.visualization.spont.rate_bin_s          = 1;     % Population event-rate bin (s)
+    config.visualization.spont.cumulative_smooth_points = 10;  % Smoothing of cumulative count before
+                                                             % differentiating to an instantaneous rate
+    config.visualization.spont.recruitment_thresholds_hz = ...  % ROI recruitment curve x-grid (Hz)
+        [0, 0.005, 0.01, 0.015, 0.02, 0.025, 0.03, 0.04, 0.05, 0.075, 0.1, 0.15, 0.2];
+    config.visualization.spont.recruitment_key_thresholds_hz = [0.01 0.02 0.05 0.1];  % Summary table rows
+                                                             % (must be on the grid above)
 
     %% ======================================================================
     %% Output

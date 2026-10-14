@@ -5,17 +5,17 @@ function fig = plot_cumulative_events_over_time(results, options)
     %
     % Args:
     %   results - Output from spont_batch_analysis()
-    %   options - Optional struct with:
-    %             .frame_rate (default: 100 Hz)
-    %             .recording_duration_s (default: 30s)
+    %   options - Struct with (all required; from the metadata and
+    %             config.visualization.spont):
+    %             .frame_rate           (Hz)
+    %             .recording_duration_s (s)
+    %             .smooth_points        (cumulative-curve smoothing before the rate)
     
-    if nargin < 2
-        options = struct();
+    required = {'frame_rate', 'recording_duration_s', 'smooth_points'};
+    if nargin < 2 || ~all(isfield(options, required))
+        error('plot_cumulative_events_over_time:options', 'options must define: %s (spont_batch_analysis sets them).', ...
+            strjoin(required, ', '));
     end
-    
-    % Set defaults
-    if ~isfield(options, 'frame_rate'), options.frame_rate = 100; end
-    if ~isfield(options, 'recording_duration_s'), options.recording_duration_s = 30; end
     
     fprintf('Creating cumulative event count analysis...\n');
     
@@ -139,7 +139,7 @@ function plot_instantaneous_rate(cum_data, condition_name, color, options)
     cumulative = cum_data.cumulative;
     
     % Smooth and differentiate
-    window_size = 10;  % Smooth over 10 time points
+    window_size = options.smooth_points;
     if length(cumulative) > window_size
         cumulative_smooth = movmean(cumulative, window_size);
         rate = diff(cumulative_smooth) ./ diff(time);

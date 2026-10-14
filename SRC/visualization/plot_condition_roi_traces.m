@@ -10,17 +10,20 @@ function fig = plot_condition_roi_traces(results, options)
     %
     % Args:
     %   results - Output from spont_batch_analysis()
-    %   options - Optional struct with plotting preferences
+    %   options - Struct with .frame_rate (Hz, required; from the metadata) and
+    %             optional plotting preferences (event_color, trace_color,
+    %             show_thresholds)
     
-    if nargin < 2
-        options = struct();
+    if nargin < 2 || ~isfield(options, 'frame_rate')
+        error('plot_condition_roi_traces:options', ...
+            'options.frame_rate is required (spont_batch_analysis sets it from the metadata).');
     end
     
-    % Set defaults
-    if ~isfield(options, 'frame_rate'), options.frame_rate = 40; end  % Hz
+    % Plotting-preference defaults
     if ~isfield(options, 'event_color'), options.event_color = [1, 0, 0]; end  % Red
     if ~isfield(options, 'trace_color'), options.trace_color = [0, 0, 0]; end  % Black
     if ~isfield(options, 'show_thresholds'), options.show_thresholds = true; end
+    if ~isfield(options, 'ymin'), options.ymin = -0.02; end   % y floor (apply_ymin_zero)
     
     fprintf(['Creating ' lblA ' vs ' lblB ' ROI comparison traces...\n']);
     
@@ -310,8 +313,13 @@ function plot_single_roi_trace(roi_data, file_data, options, condition, category
     % Create informative title
     target_info = trace_info.target_info;
     if target_info.file_idx > 0
-        title_str = sprintf('%s\n%s\nROI %d (%.4f)', condition, category, ...
-            target_info.global_roi, target_info.value);
+        if contains(category, 'Frequency')
+            value_str = sprintf('%.4f Hz', target_info.value);
+        else
+            value_str = sprintf('peak %.4f dF/F', target_info.value);
+        end
+        title_str = sprintf('%s\n%s\nROI %d (%s)', condition, category, ...
+            target_info.global_roi, value_str);
     else
         title_str = sprintf('%s\n%s\nNo data', condition, category);
     end
@@ -327,6 +335,7 @@ function plot_single_roi_trace(roi_data, file_data, options, condition, category
             ylim([y_range(1) - y_margin, y_range(2) + y_margin]);
         end
     end
+    setappdata(gca, 'ymin', options.ymin);   % y floor used by apply_ymin_zero
 end
 
 function field_name = get_category_field(category)

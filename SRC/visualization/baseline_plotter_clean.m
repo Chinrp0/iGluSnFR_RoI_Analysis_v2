@@ -120,6 +120,7 @@ function fig = create_clean_event_traces(dfof_data, event_mask, event_stats, tim
         if diff(y_range) > 0
             y_margin = diff(y_range) * 0.15;  % Reduced margin
             ylim([y_range(1) - y_margin, y_range(2) + y_margin]);
+            setappdata(gca, 'ymin', config.visualization.ymin_montage);   % see apply_ymin_zero
         end
         
         % Add legend only to first subplot
@@ -226,6 +227,7 @@ function fig = create_clean_active_roi_examples(dfof_data, event_mask, event_sta
         if diff(y_range) > 0
             y_margin = diff(y_range) * 0.15;  % Reduced margin
             ylim([y_range(1) - y_margin, y_range(2) + y_margin]);
+            setappdata(gca, 'ymin', config.visualization.ymin_montage);   % see apply_ymin_zero
         end
     end
     
@@ -335,6 +337,7 @@ function fig = create_clean_least_active_roi_examples(dfof_data, event_mask, eve
         if diff(y_range) > 0
             y_margin = diff(y_range) * 0.15;  % Reduced margin
             ylim([y_range(1) - y_margin, y_range(2) + y_margin]);
+            setappdata(gca, 'ymin', config.visualization.ymin_montage);   % see apply_ymin_zero
         end
     end
     

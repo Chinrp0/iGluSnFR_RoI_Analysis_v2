@@ -7,7 +7,11 @@
 %   - If `dataset` is in the workspace (from load_dataset or a previous run),
 %     it is used as-is: no dialog, no re-reading of the CSVs.
 %   - Otherwise a folder dialog opens at config.data_root and the folder is
-%     loaded into `dataset`, which stays in the workspace for the next run.
+%     loaded into `dataset`.
+% After the run, `dataset` stays in the workspace for the next run when
+% config.keep_dataset is true, or is cleared when it is false (the next run
+% then asks for a folder again). If a run errors, `dataset` is kept either
+% way so it can be re-run without reloading.
 % To switch folders: clear dataset (or run load_dataset again).
 %
 % Paradigm: config.dataType = 'auto' uses the Experiment column (a folder that
@@ -70,7 +74,8 @@ for p = 1:numel(parts)
         case '1AP'
             res = oneap_batch_analysis(part, options);
             tables = {res.oneap_metrics_table, 'oneap_per_trial_metrics.csv'; ...
-                      res.oneap_roi_table,     'oneap_per_roi_release.csv'};
+                      res.oneap_roi_table,     'oneap_per_roi_release.csv'; ...
+                      res.oneap_coverslip_table, 'oneap_per_coverslip.csv'};
         case '2AP'
             % Paired-pulse (PPF): PPR vs ISI (per coverslip) + method-comparison montage
             res = twoap_batch_analysis(part, options);
@@ -93,6 +98,12 @@ for p = 1:numel(parts)
             tables = {};
     end
     results_all{p} = res;
+    if cfg.visualization.y_min_zero
+        apply_ymin_zero();
+    end
+    if cfg.visualization.show_frame_time
+        annotate_frame_time(median(arrayfun(@(f) f.meta.frame_interval_ms, part.files)));
+    end
 
     % Each frame-interval set gets its own sub-folder when there are several.
     if numel(parts) > 1
@@ -127,3 +138,11 @@ fprintf('\n=== PIPELINE COMPLETE ===\n');
 list_open_figures();
 fprintf('Figures and tables saved to:\n  %s\n', base_dir);
 fprintf('To close all figures: close all\n\n');
+
+%% --- Keep or clear the loaded data (config.keep_dataset) -------------
+if cfg.keep_dataset
+    fprintf('Dataset kept in workspace (config.keep_dataset = true); the next run reuses it.\n');
+else
+    clear dataset
+    fprintf('Dataset cleared (config.keep_dataset = false); the next run asks for a folder.\n');
+end

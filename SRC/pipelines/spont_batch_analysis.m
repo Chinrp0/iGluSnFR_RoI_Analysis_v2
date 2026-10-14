@@ -62,6 +62,8 @@ function results = spont_batch_analysis(dataset, options)
     options.recording_duration_s = config.recording_duration_s;
     options.max_iei_s            = config.temporal.max_iei_s;     % IEI plot range
     options.iei_bin_size_ms      = config.temporal.bin_size_ms;   % IEI histogram bin
+    options.viz                  = config.visualization.spont;    % bins, subsampling, grids
+    options.ymin_trace           = config.visualization.ymin_montage;  % example-trace y floor
     fprintf('  Frame interval %.4g ms (%.4g Hz), %d-%d frames (metadata)\n', ...
         config.frame_dur_ms, config.frame_rate, min(nF), max(nF));
 
@@ -156,7 +158,7 @@ function results = compare_pair(ga, gb, folder_path, process_time, options)
             if options.verbose
                 fprintf('Step 5: Creating core comparison plots...\n');
             end
-            plot_handles = create_plots_integrated_final(wt_data, mut_data, comparison);
+            plot_handles = create_plots_integrated_final(wt_data, mut_data, comparison, options.viz);
             if options.savePlots
                 save_condition_plots_integrated(plot_handles, folder_path);
             end
@@ -178,8 +180,8 @@ function results = compare_pair(ga, gb, folder_path, process_time, options)
         results.processing_info.mut_files = gb.files;
         results.processing_info.process_time = process_time;
         results.processing_info.timestamp = datetime('now');
-        results.processing_info.frame_rate = getfield_safe(options, 'frame_rate', 100);
-        results.processing_info.recording_duration_s = getfield_safe(options, 'recording_duration_s', 30);
+        results.processing_info.frame_rate = options.frame_rate;
+        results.processing_info.recording_duration_s = options.recording_duration_s;
 
         %% Step 6: Create ADDITIONAL modular visualizations
         additional_plots = struct();
@@ -203,8 +205,7 @@ function results = compare_pair(ga, gb, folder_path, process_time, options)
         % Amplitude-Frequency correlation
         if options.createPlots && getfield_safe(options, 'create_amp_freq_correlation', true)
             try
-                plot_options = struct('frame_rate', options.frame_rate);
-                additional_plots.amp_freq_correlation = plot_amplitude_frequency_correlation(results, plot_options);
+                additional_plots.amp_freq_correlation = plot_amplitude_frequency_correlation(results);
             catch ME
                 fprintf('  WARNING: Failed to create amp-freq correlation plot: %s\n', ME.message);
             end
@@ -214,7 +215,9 @@ function results = compare_pair(ga, gb, folder_path, process_time, options)
         if options.createPlots && getfield_safe(options, 'create_event_raster', true)
             try
                 plot_options = struct('frame_rate', options.frame_rate, ...
-                    'recording_duration_s', options.recording_duration_s);
+                    'recording_duration_s', options.recording_duration_s, ...
+                    'max_rois_per_plot', options.viz.raster_max_rois, ...
+                    'rate_bin_s', options.viz.rate_bin_s);
                 additional_plots.event_raster = plot_event_raster(results, plot_options);
             catch ME
                 fprintf('  WARNING: Failed to create event raster plot: %s\n', ME.message);
@@ -233,7 +236,9 @@ function results = compare_pair(ga, gb, folder_path, process_time, options)
         % ROI recruitment curves
         if options.createPlots && getfield_safe(options, 'create_recruitment_curves', true)
             try
-                additional_plots.recruitment_curves = plot_roi_recruitment_curves(results);
+                additional_plots.recruitment_curves = plot_roi_recruitment_curves(results, ...
+                    struct('thresholds_hz', options.viz.recruitment_thresholds_hz, ...
+                           'key_thresholds_hz', options.viz.recruitment_key_thresholds_hz));
             catch ME
                 fprintf('  WARNING: Failed to create recruitment curves: %s\n', ME.message);
             end
@@ -243,7 +248,8 @@ function results = compare_pair(ga, gb, folder_path, process_time, options)
         if options.createPlots && getfield_safe(options, 'create_cumulative_events', true)
             try
                 plot_options = struct('frame_rate', options.frame_rate, ...
-                    'recording_duration_s', options.recording_duration_s);
+                    'recording_duration_s', options.recording_duration_s, ...
+                    'smooth_points', options.viz.cumulative_smooth_points);
                 additional_plots.cumulative_events = plot_cumulative_events_over_time(results, plot_options);
             catch ME
                 fprintf('  WARNING: Failed to create cumulative events plot: %s\n', ME.message);
@@ -253,7 +259,7 @@ function results = compare_pair(ga, gb, folder_path, process_time, options)
         % ROI trace comparison
         if options.createPlots && getfield_safe(options, 'create_roi_traces', true)
             try
-                plot_options = struct('frame_rate', options.frame_rate);
+                plot_options = struct('frame_rate', options.frame_rate, 'ymin', options.ymin_trace);
                 additional_plots.roi_traces = plot_condition_roi_traces(results, plot_options);
             catch ME
                 fprintf('  WARNING: Failed to create ROI traces: %s\n', ME.message);
@@ -279,20 +285,21 @@ end
 
 %% === INTEGRATED PLOTTING FUNCTIONS ===
 
-function plot_handles = create_plots_integrated_final(wt_data, mut_data, comparison)
-    % All plotting functions integrated - 0.01 Hz bins, active ROI focus
+function plot_handles = create_plots_integrated_final(wt_data, mut_data, comparison, viz)
+    % Core condition-comparison plots (active-ROI focus); bins etc. from viz
+    % (config.visualization.spont)
     
     plot_handles = struct();
     fprintf('  Creating improved condition comparison plots...\n');
     
-    % Frequency comparison with 0.01 Hz bins and mean labels on box plot
-    plot_handles.frequency_comparison = create_frequency_plot_final(wt_data, mut_data, comparison);
+    % Frequency comparison with mean labels on box plot
+    plot_handles.frequency_comparison = create_frequency_plot_final(wt_data, mut_data, comparison, viz);
     
     % Amplitude comparison
-    plot_handles.amplitude_comparison = create_amplitude_plot_final(wt_data, mut_data, comparison);
+    plot_handles.amplitude_comparison = create_amplitude_plot_final(wt_data, mut_data, comparison, viz);
     
     % Active ROI comparison (no 0-event ROIs)
-    plot_handles.activity_comparison = create_activity_plot_final(wt_data, mut_data, comparison);
+    plot_handles.activity_comparison = create_activity_plot_final(wt_data, mut_data, comparison, viz);
     
     % File summary
     plot_handles.file_summary = create_file_summary_final(wt_data, mut_data, comparison);
@@ -300,9 +307,9 @@ function plot_handles = create_plots_integrated_final(wt_data, mut_data, compari
     fprintf('    Created 4 improved condition comparison plots\n');
 end
 
-function fig = create_frequency_plot_final(wt_data, mut_data, comparison)
+function fig = create_frequency_plot_final(wt_data, mut_data, comparison, viz)
     [lblA, lblB, colA, colB] = spont_group_labels(wt_data, mut_data);   % group labels/colours
-    % FREQUENCY PLOT: 0.01 Hz bins, mean labels on box plot
+    % FREQUENCY PLOT: viz.freq_bin_hz bins, mean labels on box plot
     
     fig = figure('Name', ['Event Frequency Comparison: ' lblA ' vs ' lblB ' (Active ROIs Only)'], ...
         'Position', [100, 100, 1200, 800]);
@@ -310,10 +317,10 @@ function fig = create_frequency_plot_final(wt_data, mut_data, comparison)
     wt_freqs = wt_data.all_roi_frequencies(wt_data.all_roi_frequencies > 0);
     mut_freqs = mut_data.all_roi_frequencies(mut_data.all_roi_frequencies > 0);
     
-    % Subplot 1: Clean histogram with 0.01 Hz bins
+    % Subplot 1: histogram with viz.freq_bin_hz bins
     subplot(2, 2, 1);
     max_freq = max([wt_freqs, mut_freqs]);
-    edges = 0:0.02:(max_freq + 0.02);   % 20ms resolution
+    edges = 0:viz.freq_bin_hz:(max_freq + viz.freq_bin_hz);
 
     hold on;
     histogram(wt_freqs, edges, 'FaceColor', colA, 'FaceAlpha', 0.7, ...
@@ -369,7 +376,7 @@ function fig = create_frequency_plot_final(wt_data, mut_data, comparison)
         line([1, 1], [y_text*0.95, y_text*0.9], 'Color', 'k', 'LineWidth', 1);
         line([2, 2], [y_text*0.95, y_text*0.9], 'Color', 'k', 'LineWidth', 1);
         
-        ylim([min(all_freqs) - y_range*0.05, y_text + y_range*0.05]);
+        ylim([0, y_text + y_range*0.05]);
     end
     
     % Subplot 3: Cumulative distributions
@@ -411,7 +418,7 @@ function fig = create_frequency_plot_final(wt_data, mut_data, comparison)
     sgtitle(['Event Frequency Comparison: ' lblA ' vs ' lblB ' (Active ROIs Only)'], 'FontSize', 16, 'FontWeight', 'bold');
 end
 
-function fig = create_activity_plot_final(wt_data, mut_data, comparison)
+function fig = create_activity_plot_final(wt_data, mut_data, comparison, viz)
     [lblA, lblB, colA, colB] = spont_group_labels(wt_data, mut_data);   % group labels/colours
     % ACTIVITY PLOT: Active ROIs only (no 0-event ROIs)
     
@@ -439,13 +446,7 @@ function fig = create_activity_plot_final(wt_data, mut_data, comparison)
     % Activity categories (active ROIs only)
     subplot(2, 2, 3);
     if ~isempty(wt_events) && ~isempty(mut_events)
-        activity_bins = {'0 events', @(x) x == 0;
-                        '1 event', @(x) x == 1; 
-                        '2-3 events', @(x) x >= 2 & x <= 3; 
-                        '4-5 events', @(x) x >= 4 & x <= 5; 
-                        '6-7 events', @(x) x >= 6 & x <= 7; 
-                        '8-9 events', @(x) x >= 8 & x <= 9; 
-                        '10+ events', @(x) x >= 10};
+        activity_bins = activity_categories(viz.activity_bin_edges);
 
         wt_counts = zeros(1, size(activity_bins, 1));
         mut_counts = zeros(1, size(activity_bins, 1));
@@ -467,7 +468,7 @@ end
 
 %% === OTHER REQUIRED FUNCTIONS ===
 
-function fig = create_amplitude_plot_final(wt_data, mut_data, comparison)
+function fig = create_amplitude_plot_final(wt_data, mut_data, comparison, viz)
     [lblA, lblB, colA, colB] = spont_group_labels(wt_data, mut_data);   % group labels/colours
     % AMPLITUDE PLOT: Full comparison with histograms and box plots
     
@@ -509,9 +510,10 @@ function fig = create_amplitude_plot_final(wt_data, mut_data, comparison)
     plot([mut_mean, mut_mean], y_lim, 'r--', 'LineWidth', 2);
     
     subplot(2, 2, 2);
-    % Sample data for box plot if too large
-    wt_sample = datasample(wt_amps, min(5000, length(wt_amps)), 'Replace', false);
-    mut_sample = datasample(mut_amps, min(5000, length(mut_amps)), 'Replace', false);
+    % Sample data for box plot if too large (seeded, so the figure is reproducible)
+    rs = RandStream('mt19937ar', 'Seed', viz.random_seed);
+    wt_sample = datasample(rs, wt_amps, min(viz.box_max_points, length(wt_amps)), 'Replace', false);
+    mut_sample = datasample(rs, mut_amps, min(viz.box_max_points, length(mut_amps)), 'Replace', false);
     
     all_amps = [wt_sample, mut_sample];
     groups = [ones(1, length(wt_sample)), 2*ones(1, length(mut_sample))];
@@ -538,7 +540,7 @@ function fig = create_amplitude_plot_final(wt_data, mut_data, comparison)
         line([1, 1], [y_text*0.9, y_text*0.85], 'Color', 'k', 'LineWidth', 1);
         line([2, 2], [y_text*0.9, y_text*0.85], 'Color', 'k', 'LineWidth', 1);
         
-        ylim([min(all_amps) - y_range*0.05, y_text + y_range*0.05]);
+        ylim([0, y_text + y_range*0.05]);
     end
     
     subplot(2, 2, 3);
@@ -845,3 +847,27 @@ function value = getfield_safe(s, field, default)
     end
 end
 
+function bins = activity_categories(edges)
+    % {label, @(x) in-bin} rows from ascending integer edges: bin k holds
+    % edges(k) .. edges(k+1)-1 events, the last bin edges(end) or more.
+    edges = edges(:)';
+    if isempty(edges) || any(diff(edges) <= 0) || any(edges ~= round(edges)) || edges(1) < 1
+        error('spont_batch_analysis:activityBins', ...
+            'config.visualization.spont.activity_bin_edges must be ascending integers >= 1.');
+    end
+    bins = cell(numel(edges), 2);
+    for k = 1:numel(edges)
+        lo = edges(k);
+        if k == numel(edges)
+            bins(k, :) = {sprintf('%d+ events', lo), @(x) x >= lo};
+        else
+            hi = edges(k + 1) - 1;
+            if hi == lo
+                lbl = sprintf('%d event%s', lo, repmat('s', 1, lo ~= 1));
+            else
+                lbl = sprintf('%d-%d events', lo, hi);
+            end
+            bins(k, :) = {lbl, @(x) x >= lo & x <= hi};
+        end
+    end
+end

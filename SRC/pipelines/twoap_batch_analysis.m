@@ -663,7 +663,8 @@ function figs = plot_twoap_montage(groups, config)
     frame_dur = config.frame_dur_ms;
     stim1     = config.twoAP.stim1_frame;
     sync_f    = max(1, round(config.twoAP.sync_latency_ms / frame_dur));
-    maxROIs   = 20;
+    mc        = config.visualization.montage;
+    maxROIs   = mc.twoAP_max_rois;
     tax       = make_time_axis(config);
     cv        = tax.from_ms;   % ms position -> display units (for plotting)
 
@@ -677,12 +678,6 @@ function figs = plot_twoap_montage(groups, config)
         resp  = find(t2.is_responder1); resp = resp(resp <= nCol);
         if isempty(resp), continue; end
         order = resp(1:min(maxROIs, numel(resp)));
-
-        fig = figure('Name', sprintf('2AP Montage %s (ISI %g ms)', gd.name, ref.isi), ...
-            'Position', [50 50 1850 1000], 'Color', 'w');
-        figs = [figs, fig]; %#ok<AGROW>
-        nR = numel(order); nc = 5; nr = ceil(nR / nc);
-        tl = tiledlayout(fig, nr, nc, 'TileSpacing', 'tight', 'Padding', 'tight');
 
         pre_f  = round(config.twoAP.montage_pre_ms  / frame_dur);
         post_f = round(config.twoAP.montage_post_ms / frame_dur);
@@ -707,65 +702,78 @@ function figs = plot_twoap_montage(groups, config)
         s1_end_ms  = min(search_f, max(isi_frames - 1, 1)) * frame_dur;   % pulse-1 (capped at ISI)
         s2_end_ms  = config.twoAP.peak_search_ms;                         % pulse-2
 
-        for k = 1:nR
-            roi = order(k);
-            nexttile(tl, k); hold on;
-            % Shade the peak-search windows behind the trace (blue=pulse1, red=pulse2)
-            xregion(0, cv(s1_end_ms), 'FaceColor', [0.2 0.4 1.0], 'FaceAlpha', 0.06);
-            xregion(cv(stim2_ms), cv(stim2_ms + s2_end_ms), 'FaceColor', [1.0 0.3 0.3], 'FaceAlpha', 0.06);
-            % Plot the WHOLE trace, then focus the view on the stim window; the
-            % rest of the trace is a horizontal drag away (see scroll_time_axis).
-            plot(tfull, ref.dfof(:, roi), 'k-', 'LineWidth', 1);
-            % yline/xline span the full axis height/width, so thresholds and stim
-            % markers stay put while the user pans/zooms in x.
-            if isfinite(t2.upper_threshold(roi))
-                yline(t2.upper_threshold(roi), 'g:', 'LineWidth', 1);
+        % With montage.rows set, ROIs beyond one rows x columns grid continue
+        % on further figures (pages).
+        [nr, nc, per, nP] = montage_grid(numel(order), mc);
+        for pg = 1:nP
+            pidx = order((pg-1)*per + 1 : min(pg*per, numel(order)));
+            if nP > 1, ptxt = sprintf(' (page %d/%d)', pg, nP); else, ptxt = ''; end
+            fig = figure('Name', sprintf('2AP Montage %s (ISI %g ms)%s', gd.name, ref.isi, ptxt), ...
+                'Position', [50 50 1850 1000], 'Color', 'w');
+            figs = [figs, fig]; %#ok<AGROW>
+            tl = tiledlayout(fig, nr, nc, 'TileSpacing', 'tight', 'Padding', 'tight');
+
+            for k = 1:numel(pidx)
+                roi = pidx(k);
+                nexttile(tl, k); hold on;
+                % Shade the peak-search windows behind the trace (blue=pulse1, red=pulse2)
+                xregion(0, cv(s1_end_ms), 'FaceColor', [0.2 0.4 1.0], 'FaceAlpha', 0.06);
+                xregion(cv(stim2_ms), cv(stim2_ms + s2_end_ms), 'FaceColor', [1.0 0.3 0.3], 'FaceAlpha', 0.06);
+                % Plot the WHOLE trace, then focus the view on the stim window; the
+                % rest of the trace is a horizontal drag away (see scroll_time_axis).
+                plot(tfull, ref.dfof(:, roi), 'k-', 'LineWidth', 1);
+                % yline/xline span the full axis height/width, so thresholds and stim
+                % markers stay put while the user pans/zooms in x.
+                if isfinite(t2.upper_threshold(roi))
+                    yline(t2.upper_threshold(roi), 'g:', 'LineWidth', 1);
+                end
+                if isfield(t2, 'lower_threshold') && isfinite(t2.lower_threshold(roi))
+                    yline(t2.lower_threshold(roi), ':', 'Color', [0.5 0.8 0.5], 'LineWidth', 0.8);
+                end
+                % Focus the vertical scale on the stim window (not the whole trace).
+                seg = ref.dfof(fidx, roi); seg = seg(isfinite(seg));
+                if ~isempty(seg)
+                    lo = min(seg); hi = max(seg); pad = 0.1 * max(hi - lo, eps);
+                    ylim([lo - pad, hi + pad]);
+                end
+                setappdata(gca, 'ymin', config.visualization.ymin_montage);   % see apply_ymin_zero
+                xline(0, '--', 'Color', 'b', 'LineWidth', 1);            % stim1
+                xline(cv(stim2_ms), '--', 'Color', 'r', 'LineWidth', 1); % stim2
+                nF = nF_full;
+                % Method 1 peak-max: filled circles at each pulse's peak
+                t1ms = t2.peak1_time_ms(roi);
+                if isfinite(t1ms)
+                    f = stim1 + round(t1ms / frame_dur);
+                    if f <= nF, plot(cv(t1ms), ref.dfof(f, roi), 'bo', 'MarkerFaceColor', 'b', 'MarkerSize', 5); end
+                end
+                if isfinite(t2.peak2_time_ms(roi))
+                    f = stim2 + round(t2.peak2_time_ms(roi) / frame_dur);
+                    if f <= nF, plot(cv(stim2_ms + t2.peak2_time_ms(roi)), ref.dfof(f, roi), 'ro', 'MarkerFaceColor', 'r', 'MarkerSize', 5); end
+                end
+                % Method 2 sync time-lock: crosses at the fixed sync latency
+                if stim1 + sync_f <= nF
+                    plot(cv(config.twoAP.sync_latency_ms), ref.dfof(stim1 + sync_f, roi), 'bx', 'MarkerSize', 7, 'LineWidth', 1.2);
+                end
+                if stim2 + sync_f <= nF
+                    plot(cv(stim2_ms + config.twoAP.sync_latency_ms), ref.dfof(stim2 + sync_f, roi), 'rx', 'MarkerSize', 7, 'LineWidth', 1.2);
+                end
+                % Method 3 p1-latency lock: pulse-2 read at pulse-1's own peak latency
+                if isfinite(t1ms)
+                    f = stim2 + round(t1ms / frame_dur);
+                    if f <= nF, plot(cv(stim2_ms + t1ms), ref.dfof(f, roi), 'rd', 'MarkerSize', 7, 'LineWidth', 1.2); end
+                end
+                ttl = sprintf('ROI%d  PPR=%.2f Q=%.1f', roi, t2.ppr_max(roi), t2.q_pair(roi));
+                title(ttl, 'FontSize', 8);
+                set(gca, 'FontSize', 7); grid on; box on;
+                scroll_time_axis(gca, xwin);   % show stim window; drag to scroll x
             end
-            if isfield(t2, 'lower_threshold') && isfinite(t2.lower_threshold(roi))
-                yline(t2.lower_threshold(roi), ':', 'Color', [0.5 0.8 0.5], 'LineWidth', 0.8);
-            end
-            % Focus the vertical scale on the stim window (not the whole trace).
-            seg = ref.dfof(fidx, roi); seg = seg(isfinite(seg));
-            if ~isempty(seg)
-                lo = min(seg); hi = max(seg); pad = 0.1 * max(hi - lo, eps);
-                ylim([lo - pad, hi + pad]);
-            end
-            xline(0, '--', 'Color', 'b', 'LineWidth', 1);            % stim1
-            xline(cv(stim2_ms), '--', 'Color', 'r', 'LineWidth', 1); % stim2
-            nF = nF_full;
-            % Method 1 peak-max: filled circles at each pulse's peak
-            t1ms = t2.peak1_time_ms(roi);
-            if isfinite(t1ms)
-                f = stim1 + round(t1ms / frame_dur);
-                if f <= nF, plot(cv(t1ms), ref.dfof(f, roi), 'bo', 'MarkerFaceColor', 'b', 'MarkerSize', 5); end
-            end
-            if isfinite(t2.peak2_time_ms(roi))
-                f = stim2 + round(t2.peak2_time_ms(roi) / frame_dur);
-                if f <= nF, plot(cv(stim2_ms + t2.peak2_time_ms(roi)), ref.dfof(f, roi), 'ro', 'MarkerFaceColor', 'r', 'MarkerSize', 5); end
-            end
-            % Method 2 sync time-lock: crosses at the fixed sync latency
-            if stim1 + sync_f <= nF
-                plot(cv(config.twoAP.sync_latency_ms), ref.dfof(stim1 + sync_f, roi), 'bx', 'MarkerSize', 7, 'LineWidth', 1.2);
-            end
-            if stim2 + sync_f <= nF
-                plot(cv(stim2_ms + config.twoAP.sync_latency_ms), ref.dfof(stim2 + sync_f, roi), 'rx', 'MarkerSize', 7, 'LineWidth', 1.2);
-            end
-            % Method 3 p1-latency lock: pulse-2 read at pulse-1's own peak latency
-            if isfinite(t1ms)
-                f = stim2 + round(t1ms / frame_dur);
-                if f <= nF, plot(cv(stim2_ms + t1ms), ref.dfof(f, roi), 'rd', 'MarkerSize', 7, 'LineWidth', 1.2); end
-            end
-            ttl = sprintf('ROI%d  PPR=%.2f Q=%.1f', roi, t2.ppr_max(roi), t2.q_pair(roi));
-            title(ttl, 'FontSize', 8);
-            set(gca, 'FontSize', 7); grid on; box on;
-            scroll_time_axis(gca, xwin);   % show stim window; drag to scroll x
+            title(tl, sprintf(['2AP %s, ISI=%g ms%s \\bullet example pulse-1 responders (one reference file); ' ...
+                'tile title = PPR / total charge Q (dF/F*ms) \\bullet drag to scroll x, whole trace plotted\n' ...
+                'blue=stim1, red=stim2; shaded=peak-search window; o=peak-max, x=sync %gms, d=p1-lock; ' ...
+                'green=upper %g\\sigma / lower %g\\sigma; x in %s'], gd.name, ref.isi, ptxt, ...
+                config.twoAP.sync_latency_ms, config.twoAP.upper_threshold_sigma, config.twoAP.lower_threshold_sigma, tax.unit), ...
+                'FontSize', 11, 'FontWeight', 'bold', 'Interpreter', 'tex');
         end
-        title(tl, sprintf(['2AP %s, ISI=%g ms \\bullet example pulse-1 responders (one reference file); ' ...
-            'tile title = PPR / total charge Q (dF/F*ms) \\bullet drag to scroll x, whole trace plotted\n' ...
-            'blue=stim1, red=stim2; shaded=peak-search window; o=peak-max, x=sync %gms, d=p1-lock; ' ...
-            'green=upper %g\\sigma / lower %g\\sigma; x in %s'], gd.name, ref.isi, ...
-            config.twoAP.sync_latency_ms, config.twoAP.upper_threshold_sigma, config.twoAP.lower_threshold_sigma, tax.unit), ...
-            'FontSize', 11, 'FontWeight', 'bold', 'Interpreter', 'tex');
     end
 end
 
@@ -819,6 +827,7 @@ function fig = render_cs_average_fig(groups, config, rows, rowGroup, isis, bandL
         for cix = 1:nC
             isi = isis(cix);
             axh = nexttile(tl, (r-1)*nC + cix); hold on;
+            setappdata(axh, 'ymin', config.visualization.ymin_mean_trace);   % see apply_ymin_zero
             idx = find(strcmp({gd.cs_avg.cs}, csname) & [gd.cs_avg.isi] == isi, 1);
             if isempty(idx), axis off; continue; end
             rowAxes(r, cix) = axh;

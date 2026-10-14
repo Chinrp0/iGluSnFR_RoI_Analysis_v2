@@ -17,7 +17,8 @@ function results = oneap_batch_analysis(dataset, options)
     % Output:
     %   results - struct with .groups, .comparisons, .plot_handles,
     %             .oneap_metrics_table (one row per ROI x trial),
-    %             .oneap_roi_table (one row per ROI), .processing_info
+    %             .oneap_roi_table (one row per ROI),
+    %             .oneap_coverslip_table (one row per coverslip), .processing_info
 
     if nargin < 2, options = struct(); end
     if ~isfield(options, 'verbose'),     options.verbose = true; end
@@ -97,6 +98,7 @@ function results = oneap_batch_analysis(dataset, options)
             gd.genotype = geno_list{g};
             gd.drug     = drug_list{d};
             gd.avg_fit  = fit_group_double(gd, config);   % averaged double-exp decay
+            gd.cs_avg   = coverslip_average_traces(gd, config);
             if isempty(groups), groups = gd; else, groups(end+1) = gd; end %#ok<AGROW>
             fprintf('  %s: %d files, %d coverslips, %d ROIs, %d/%d successful trials (%.0f%%)\n', ...
                 gd.name, gd.num_files, gd.num_coverslips, gd.n_rois, gd.n_responders, ...
@@ -130,6 +132,7 @@ function results = oneap_batch_analysis(dataset, options)
     if options.createPlots
         fprintf('\nCreating 1AP figures...\n');
         plot_handles.average_traces = plot_oneap_average_traces(groups, config);
+        plot_handles.cs_average     = plot_oneap_cs_average(groups, config);
         plot_handles.amplitude      = plot_oneap_metric(groups, 'peak_amplitude', true, ...
             'Evoked Peak Amplitude (\DeltaF/F)', 'Evoked Peak Amplitude (successful trials)', comparison, 'peak_amplitude');
         plot_handles.kinetics       = plot_oneap_kinetics(groups, comparison);
@@ -147,6 +150,7 @@ function results = oneap_batch_analysis(dataset, options)
     %% Step 6: metrics tables
     oneap_metrics_table = build_metrics_table(groups);
     oneap_roi_table     = build_roi_table(groups);
+    oneap_coverslip_table = build_coverslip_table(groups);
 
     %% Assemble results
     results = struct();
@@ -157,6 +161,7 @@ function results = oneap_batch_analysis(dataset, options)
     results.plot_handles        = plot_handles;
     results.oneap_metrics_table = oneap_metrics_table;
     results.oneap_roi_table     = oneap_roi_table;
+    results.oneap_coverslip_table = oneap_coverslip_table;
     results.processing_info     = struct('folder_path', dataset.folder, ...
         'metadata_file', dataset.metadata_file, ...
         'process_time', process_time, 'timestamp', datetime('now'), ...
@@ -189,7 +194,7 @@ function gd = aggregate_group(fileResults, name, color)
     qc_category = []; crossed_upper = [];
     tau_A = []; tau_offset = []; tau_peak_frame = [];
     event_peak_times_ms = {};
-    file_of_roi = []; filenames = {}; coverslip_of_roi = {};
+    file_of_roi = []; filenames = {}; coverslip_of_roi = {}; region_of_roi = {};
     temporal_hist_sum = []; bin_centers_ms = [];
 
     ref_frames = [];
@@ -204,6 +209,7 @@ function gd = aggregate_group(fileResults, name, color)
         % coverslip are pseudoreplicates and must collapse to it before stats.
         csid = parse_coverslip_id(fr.filename);
         coverslip_of_roi = [coverslip_of_roi, repmat({csid}, 1, fr.numUnits)]; %#ok<AGROW>
+        region_of_roi    = [region_of_roi, repmat({parse_region_id(fr.filename)}, 1, fr.numUnits)]; %#ok<AGROW>
         unit_roi   = [unit_roi,   o.unit_roi];    %#ok<AGROW>
         unit_trial = [unit_trial, o.unit_trial];  %#ok<AGROW>
         unit_flags = [unit_flags, o.unit_flags];  %#ok<AGROW>
@@ -284,6 +290,7 @@ function gd = aggregate_group(fileResults, name, color)
     gd.file_of_roi       = file_of_roi;
     gd.filenames         = filenames;
     gd.coverslip_of_roi  = coverslip_of_roi;
+    gd.region_of_roi     = region_of_roi;
     gd.temporal_hist_sum = temporal_hist_sum;
     gd.bin_centers_ms    = bin_centers_ms;
     gd.unit_roi          = unit_roi;
@@ -374,6 +381,69 @@ function fr = coverslip_async_frac(gd)
         if tot > 0, fr(i) = a / tot; end
     end
     fr = fr(isfinite(fr));
+end
+
+function cs_avg = coverslip_average_traces(gd, config)
+    % Per-coverslip average dF/F trace over EVERY scorable (ROI, trial) unit
+    % (qc 1-3: successes and failures alike), pooled across the coverslip's
+    % regions. Not gated on response, so it is selection-free: its peak is the
+    % coverslip's mean evoked response per trial (efficacy-like). Alongside it:
+    % the successful-trials-only mean (potency-like) and each region's (c#) mean,
+    % to show the within-coverslip spread the average collapses.
+    cs_avg = struct('cs', {}, 'trace', {}, 'sem', {}, 'n_units', {}, 'n_rois', {}, ...
+        'trace_resp', {}, 'n_resp', {}, 'regions', {}, 'peak', {}, 'ttp_ms', {}, 'auc', {});
+    if isempty(gd.dfof_all), return; end
+    nU    = size(gd.dfof_all, 2);
+    valid = gd.qc_category(1:nU) >= 1 & gd.qc_category(1:nU) <= 3;
+    cs    = gd.coverslip_of_roi(1:nU);
+    rg    = gd.region_of_roi(1:nU);
+    uniq  = unique(cs, 'stable');
+    for i = 1:numel(uniq)
+        m = strcmp(cs, uniq{i}) & valid;
+        if ~any(m), continue; end
+        M   = gd.dfof_all(:, m);
+        n   = sum(isfinite(M), 2);
+        mu  = mean(M, 2, 'omitnan')';
+        sem = (std(M, 0, 2, 'omitnan') ./ sqrt(max(n, 1)))';
+        mr  = m & gd.is_responder(1:nU);
+        tr  = nan(size(mu));
+        if any(mr), tr = mean(gd.dfof_all(:, mr), 2, 'omitnan')'; end
+        regions = struct('label', {}, 'trace', {}, 'n', {});
+        ur = unique(rg(m), 'stable');
+        for r = 1:numel(ur)
+            mm = m & strcmp(rg, ur{r});
+            regions(end+1) = struct('label', ur{r}, ...                      %#ok<AGROW>
+                'trace', mean(gd.dfof_all(:, mm), 2, 'omitnan')', 'n', nnz(mm));
+        end
+        [pk, ttp, a] = avg_trace_metrics(mu, config);
+        n_rois = size(unique([gd.file_of_roi(m); gd.unit_roi(m)]', 'rows'), 1);
+        cs_avg(end+1) = struct('cs', uniq{i}, 'trace', mu, 'sem', sem, ...    %#ok<AGROW>
+            'n_units', nnz(m), 'n_rois', n_rois, 'trace_resp', tr, 'n_resp', nnz(mr), ...
+            'regions', regions, 'peak', pk, 'ttp_ms', ttp, 'auc', a);
+    end
+end
+
+function [pk, ttp_ms, a] = avg_trace_metrics(trace, config)
+    % Peak (dF/F above the pre-stim mean), time to peak (ms) and AUC
+    % (dF/F*ms) of an already-averaged trace, both over config.oneAP.auc_window_ms.
+    % The peak window is the whole AUC window (not the 50 ms tau_peak_window)
+    % because some coverslip averages peak late (~100 ms) and would be missed.
+    pk = NaN; ttp_ms = NaN; a = NaN;
+    stim = config.oneAP.stim_frame;
+    fd   = 1000 / config.frame_rate;
+    nF   = numel(trace);
+    if stim < 2 || stim > nF, return; end
+    pre  = trace(1:stim-1); base = mean(pre(isfinite(pre)));
+    if ~isfinite(base), return; end
+    aw = config.oneAP.auc_window_ms;
+    f0 = max(stim + round(aw(1) / fd), 1); f1 = min(stim + round(aw(2) / fd), nF);
+    w = trace(f0:f1);
+    w(~isfinite(w)) = -Inf;
+    [mx, rel] = max(w);
+    if isfinite(mx), pk = mx - base; ttp_ms = (f0 + rel - 1 - stim) * fd; end
+    seg = trace(f0:f1) - base;
+    seg = seg(isfinite(seg));
+    if numel(seg) >= 2, a = trapz(seg) * fd; end
 end
 
 function comparison = compare_groups(ga, gb)
@@ -498,8 +568,87 @@ function fig = plot_oneap_average_traces(groups, config)
     title('1AP Average Evoked Trace (double-exponential decay fit)');
     legend(legend_entries, 'Location', 'best');
     grid on; box on;
+    setappdata(gca, 'ymin', config.visualization.ymin_mean_trace);   % see apply_ymin_zero
     % Label in the chosen unit; override xlim with config.x_axis.range_frames if set.
     format_time_axis(gca, tax, 'Time from stimulus', stim_frame);
+end
+
+function fig = plot_oneap_cs_average(groups, config)
+    % Coverslip-average dF/F. One row per group: the first tile is the group
+    % average OF the coverslip averages (mean +/- SEM across coverslips, n =
+    % coverslips - the statistical unit), the rest are one tile per coverslip
+    % (mean +/- SEM over all scorable trials, dashed = successful trials only,
+    % grey = each region c#). y is shared across all tiles so groups compare.
+    fig = [];
+    nG = numel(groups);
+    nCs = arrayfun(@(g) numel(g.cs_avg), groups);
+    if nG == 0 || all(nCs == 0), return; end
+    stim_frame = config.oneAP.stim_frame;
+    frame_dur  = 1000 / config.frame_rate;
+    tax        = make_time_axis(config);
+    xwin       = tax.from_ms([-200, config.oneAP.async_window_ms(2) + 100]);
+    aw         = tax.from_ms(config.oneAP.auc_window_ms);
+    nC = max(nCs) + 1;
+
+    fig = figure('Name', 'OneAP Coverslip average dF/F', ...
+        'Position', [40 40 max(1200, 260*nC) max(450, 280*nG)], 'Color', 'w');
+    tl = tiledlayout(fig, nG, nC, 'TileSpacing', 'tight', 'Padding', 'tight');
+    axs = gobjects(1, 0);
+    for g = 1:nG
+        gd = groups(g);
+        if nCs(g) == 0, continue; end
+        t = tax.from_ms(((1:numel(gd.cs_avg(1).trace)) - stim_frame) * frame_dur);
+
+        % Group tile: each coverslip average (thin) + their mean +/- SEM
+        ax = nexttile(tl, (g-1)*nC + 1); hold on; axs(end+1) = ax; %#ok<AGROW>
+        C  = vertcat(gd.cs_avg.trace);                 % [coverslips x frames]
+        mu = mean(C, 1, 'omitnan');
+        se = std(C, 0, 1, 'omitnan') ./ sqrt(max(sum(isfinite(C), 1), 1));
+        xregion(aw(1), aw(2), 'FaceColor', [0.45 0.45 0.50], 'FaceAlpha', 0.10);
+        fill([t, fliplr(t)], [mu + se, fliplr(mu - se)], gd.color, ...
+            'FaceAlpha', 0.2, 'EdgeColor', 'none');
+        plot(t, C', '-', 'Color', [gd.color 0.45], 'LineWidth', 0.7);
+        plot(t, mu, '-', 'Color', gd.color, 'LineWidth', 2);
+        xline(0, 'k--');
+        [pk, ~, a] = avg_trace_metrics(mu, config);
+        title(sprintf('%s: mean of %d coverslips\npeak=%.3f AUC=%.2f', ...
+            gd.name, size(C, 1), pk, a), 'FontSize', 8, 'Interpreter', 'none');
+        ylabel(sprintf('%s\n\\DeltaF/F', gd.name), 'FontSize', 8, 'FontWeight', 'bold');
+        style_cs_tile(ax, tax, xwin, g == nG, config);
+
+        % One tile per coverslip
+        for c = 1:nCs(g)
+            e  = gd.cs_avg(c);
+            ax = nexttile(tl, (g-1)*nC + 1 + c); hold on; axs(end+1) = ax; %#ok<AGROW>
+            xregion(aw(1), aw(2), 'FaceColor', [0.45 0.45 0.50], 'FaceAlpha', 0.10);
+            fill([t, fliplr(t)], [e.trace + e.sem, fliplr(e.trace - e.sem)], gd.color, ...
+                'FaceAlpha', 0.2, 'EdgeColor', 'none');
+            for r = 1:numel(e.regions)
+                plot(t, e.regions(r).trace, '-', 'Color', [0.6 0.6 0.6], 'LineWidth', 0.5);
+            end
+            plot(t, e.trace, '-', 'Color', gd.color, 'LineWidth', 1.5);
+            plot(t, e.trace_resp, '--', 'Color', gd.color * 0.6, 'LineWidth', 1);
+            xline(0, 'k--');
+            title(sprintf('%s  peak=%.3f AUC=%.2f\n%d scorable ROIs, %d/%d successful trials, %d c', ...
+                e.cs, e.peak, e.auc, e.n_rois, e.n_resp, e.n_units, numel(e.regions)), ...
+                'FontSize', 8, 'Interpreter', 'none');
+            style_cs_tile(ax, tax, xwin, g == nG, config);
+        end
+    end
+    if numel(axs) >= 2, linkaxes(axs, 'y'); end
+    title(tl, sprintf(['1AP Coverslip average \\DeltaF/F: mean \\pm SEM over all scorable trials ' ...
+        '(successes + failures); dashed = successful trials only; grey = region c#\n' ...
+        'First column = mean of coverslip averages (n = coverslips); shaded = AUC / peak window ' ...
+        '%g-%g ms; x in %s'], config.oneAP.auc_window_ms, tax.unit), ...
+        'FontSize', 12, 'FontWeight', 'bold', 'Interpreter', 'tex');
+end
+
+function style_cs_tile(ax, tax, xwin, isBottom, config)
+    set(ax, 'FontSize', 7); grid(ax, 'on'); box(ax, 'on');
+    ax.YAxis.Exponent = 0;
+    scroll_time_axis(ax, xwin);   % stim window shown; drag to scroll x
+    setappdata(ax, 'ymin', config.visualization.ymin_mean_trace);   % see apply_ymin_zero
+    if isBottom, xlabel(ax, sprintf('Time from stimulus (%s)', tax.unit), 'FontSize', 7); end
 end
 
 function af = fit_group_double(gd, config)
@@ -612,7 +761,12 @@ function annotate_pvalue(comparison, pfield, all_vals)
     line([1 2], [y y], 'Color', 'k');
     text(1.5, y, ptxt, 'HorizontalAlignment', 'center', ...
         'VerticalAlignment', 'bottom', 'FontWeight', 'bold');
-    ylim([min(all_vals) - 0.05*(max(all_vals)-min(all_vals)+eps), y + 0.1*(max(all_vals)-min(all_vals)+eps)]);
+    % Y starts at 0; leave headroom for the p-value text. The span uses the
+    % data's distance from 0 so identical values (e.g. every coverslip at
+    % P(response) = 1) still give an increasing range.
+    span = max(abs([all_vals, y]));
+    if span == 0, span = 1; end
+    ylim([min(0, min(all_vals)), y + 0.1 * span]);
 end
 
 function fig = plot_oneap_auc_split(groups, comparison)
@@ -659,7 +813,8 @@ function fig = plot_oneap_sync_async(groups, config)
     legend({'Synchronous', 'Asynchronous'}, 'Location', 'bestoutside');
     title('Synchronous vs Asynchronous event share'); grid on; box on;
 
-    % Right: post-stim temporal histogram (PSTH)
+    % Right: post-stim temporal histogram (PSTH). Time 0 = the refined stim
+    % frame (Stim_Frames_Refined), the same zero every 1AP metric uses.
     subplot(1,2,2); hold on;
     for g = 1:nG
         gd = groups(g);
@@ -673,7 +828,7 @@ function fig = plot_oneap_sync_async(groups, config)
     patch([0 sync_hi sync_hi 0], [0 0 yl(2) yl(2)], [0.2 0.6 0.2], ...
         'FaceAlpha', 0.12, 'EdgeColor', 'none', 'HandleVisibility', 'off');
     ylabel(sprintf('Event count (%d ms bins)', config.oneAP.bin_size_ms));
-    title('Post-stimulus event time histogram');
+    title('Post-stimulus event time histogram (0 = refined stim frame)');
     legend('Location', 'best'); grid on; box on;
     format_time_axis(gca, tax, 'Time from stimulus');
     sgtitle('1AP Synchronous / Asynchronous Release', 'FontSize', 14, 'FontWeight', 'bold');
@@ -900,13 +1055,14 @@ function figs = plot_oneap_montage(groups, config)
     stim_frame = config.oneAP.stim_frame;
     frame_dur  = 1000 / config.frame_rate;
     tax        = make_time_axis(config);
-    maxROIs = 40;
-    ylim_fixed = [-0.02, 0.06];   % shared y-axis for all panels (dF/F)
+    mc         = config.visualization.montage;
+    maxROIs    = mc.oneAP_max_rois;
+    ylim_fixed = mc.oneAP_ylim;   % shared y-axis for all panels (dF/F; [] = auto)
 
     % Show a generous pre-stim segment so the resting noise is visible against
     % the evoked response (the response itself is fast: ~0-30 ms post-stim).
-    win_pre  = round(150 / frame_dur);
-    win_post = round((config.oneAP.async_window_ms(2) + 80) / frame_dur);
+    win_pre  = round(mc.oneAP_pre_ms / frame_dur);
+    win_post = round((config.oneAP.async_window_ms(2) + mc.oneAP_post_extra_ms) / frame_dur);
 
     for g = 1:numel(groups)
         gd = groups(g);
@@ -918,15 +1074,6 @@ function figs = plot_oneap_montage(groups, config)
         order = order(1:min(maxROIs, numel(order)));
         if isempty(order), continue; end
 
-        fig = figure('Name', sprintf('OneAP Montage %s', gd.name), ...
-            'Position', [50 40 1850 1000], 'Color', 'w');
-        figs = [figs, fig]; %#ok<AGROW>
-        nR = numel(order);
-        nc = 5; nr = ceil(nR / nc);
-        % tiledlayout with tight spacing/padding gives each panel more
-        % horizontal room than subplot's default margins.
-        tl = tiledlayout(fig, nr, nc, 'TileSpacing', 'tight', 'Padding', 'tight');
-
         nF_full = size(gd.dfof_all, 1);
         [f0, f1] = montage_window(tax, stim_frame, win_pre, win_post, nF_full);
         fidx  = f0:f1;
@@ -934,37 +1081,51 @@ function figs = plot_oneap_montage(groups, config)
         tfull = tax.from_ms(((1:nF_full) - stim_frame) * frame_dur);  % FULL-trace axis
         xwin  = [t(1) t(end)];                                        % initial x-window
 
-        for k = 1:nR
-            roi = order(k);
-            nexttile(tl, k); hold on;
-            % Plot the WHOLE trace; the view starts on the stim window and the
-            % rest is a horizontal drag away (see scroll_time_axis).
-            plot(tfull, gd.dfof_all(:, roi), 'k-', 'LineWidth', 1);
-            if isfinite(gd.upper_threshold(roi))
-                yline(gd.upper_threshold(roi), 'g:', 'LineWidth', 1);
+        % tiledlayout with tight spacing/padding gives each panel more
+        % horizontal room than subplot's default margins. With montage.rows set,
+        % ROIs beyond one rows x columns grid continue on further figures.
+        [nr, nc, per, nP] = montage_grid(numel(order), mc);
+        for pg = 1:nP
+            pidx = order((pg-1)*per + 1 : min(pg*per, numel(order)));
+            ptxt = page_text(pg, nP);
+            fig = figure('Name', sprintf('OneAP Montage %s%s', gd.name, ptxt), ...
+                'Position', [50 40 1850 1000], 'Color', 'w');
+            figs = [figs, fig]; %#ok<AGROW>
+            tl = tiledlayout(fig, nr, nc, 'TileSpacing', 'tight', 'Padding', 'tight');
+
+            for k = 1:numel(pidx)
+                roi = pidx(k);
+                nexttile(tl, k); hold on;
+                % Plot the WHOLE trace; the view starts on the stim window and the
+                % rest is a horizontal drag away (see scroll_time_axis).
+                plot(tfull, gd.dfof_all(:, roi), 'k-', 'LineWidth', 1);
+                if isfinite(gd.upper_threshold(roi))
+                    yline(gd.upper_threshold(roi), 'g:', 'LineWidth', 1);
+                end
+                if ~isempty(ylim_fixed), ylim(montage_ylim(ylim_fixed, gd.dfof_all(fidx, roi))); end
+                xline(0, '--', 'Color', 'k', 'LineWidth', 1);
+                % All counted peaks (whole trace): blue = synchronous, red = asynchronous
+                plot_peak_markers(gd, roi, stim_frame, frame_dur, 1, nF_full, ...
+                    config.oneAP.sync_window_ms, config.oneAP.async_window_ms, tax);
+                % Fitted mono-exponential decay (magenta) where a valid tau exists
+                plot_tau_fit(gd, roi, stim_frame, frame_dur, nF_full, tax);
+                lbl = unit_label(gd, roi);
+                if gd.is_responder(roi) && isfinite(gd.tau_ms(roi))
+                    ttl = sprintf('%s R \\tau=%.0fms', lbl, gd.tau_ms(roi));
+                elseif gd.is_responder(roi)
+                    ttl = sprintf('%s R', lbl);
+                else
+                    ttl = sprintf('%s -', lbl);
+                end
+                title(ttl, 'FontSize', 8, 'Interpreter', 'tex');
+                set(gca, 'FontSize', 7); grid on; box on;
+                scroll_time_axis(gca, xwin);   % show stim window; drag to scroll x
+                setappdata(gca, 'ymin', config.visualization.ymin_montage);   % see apply_ymin_zero
             end
-            ylim(ylim_fixed);
-            xline(0, '--', 'Color', 'k', 'LineWidth', 1);
-            % All counted peaks (whole trace): blue = synchronous, red = asynchronous
-            plot_peak_markers(gd, roi, stim_frame, frame_dur, 1, nF_full, ...
-                config.oneAP.sync_window_ms, config.oneAP.async_window_ms, tax);
-            % Fitted mono-exponential decay (magenta) where a valid tau exists
-            plot_tau_fit(gd, roi, stim_frame, frame_dur, nF_full, tax);
-            lbl = unit_label(gd, roi);
-            if gd.is_responder(roi) && isfinite(gd.tau_ms(roi))
-                ttl = sprintf('%s R \\tau=%.0fms', lbl, gd.tau_ms(roi));
-            elseif gd.is_responder(roi)
-                ttl = sprintf('%s R', lbl);
-            else
-                ttl = sprintf('%s -', lbl);
-            end
-            title(ttl, 'FontSize', 8, 'Interpreter', 'tex');
-            set(gca, 'FontSize', 7); grid on; box on;
-            scroll_time_axis(gca, xwin);   % show stim window; drag to scroll x
+            title(tl, sprintf(['1AP ROI montage: %s%s (responders first; drag to scroll x, whole trace plotted; ' ...
+                'blue=sync peak, red=async peak, magenta=\\tau fit; x in %s)'], gd.name, ptxt, tax.unit), ...
+                'FontSize', 13, 'FontWeight', 'bold', 'Interpreter', 'tex');
         end
-        title(tl, sprintf(['1AP ROI montage: %s (responders first; drag to scroll x, whole trace plotted; ' ...
-            'blue=sync peak, red=async peak, magenta=\\tau fit; x in %s)'], gd.name, tax.unit), ...
-            'FontSize', 13, 'FontWeight', 'bold', 'Interpreter', 'tex');
     end
 end
 
@@ -972,18 +1133,19 @@ function figs = plot_oneap_marginal(groups, config)
     % Montage of the MARGINAL synchronous responders - the weakest evoked calls,
     % the ones sitting just above the detection threshold. These are where a
     % responder/non-responder mis-call is most likely, so inspecting them by eye
-    % is the check on whether the filter is keeping noise. Same 5x4 = 20-panel
+    % is the check on whether the filter is keeping noise. Same panel grid
     % format and styling as plot_oneap_montage (extended baseline, green upper /
     % cyan lower threshold, stim marker, peak markers, tau fit).
     figs = [];
     stim_frame = config.oneAP.stim_frame;
     frame_dur  = 1000 / config.frame_rate;
     tax        = make_time_axis(config);
-    maxROIs    = 20;                 % 5 col x 4 rows, matching the montage
-    ylim_fixed = [-0.02, 0.06];      % shared y-axis for all panels (dF/F)
+    mc         = config.visualization.montage;
+    maxROIs    = mc.oneAP_marginal_max_rois;
+    ylim_fixed = mc.oneAP_ylim;      % shared y-axis for all panels (dF/F; [] = auto)
 
-    win_pre  = round(150 / frame_dur);   % generous pre-stim baseline (see noise)
-    win_post = round((config.oneAP.async_window_ms(2) + 80) / frame_dur);
+    win_pre  = round(mc.oneAP_pre_ms / frame_dur);   % generous pre-stim baseline (see noise)
+    win_post = round((config.oneAP.async_window_ms(2) + mc.oneAP_post_extra_ms) / frame_dur);
 
     for g = 1:numel(groups)
         gd = groups(g);
@@ -1001,13 +1163,6 @@ function figs = plot_oneap_marginal(groups, config)
         order = order(1:min(maxROIs, numel(order)));
         if isempty(order), continue; end
 
-        fig = figure('Name', sprintf('OneAP Marginal responders %s', gd.name), ...
-            'Position', [50 40 1850 1000], 'Color', 'w');
-        figs = [figs, fig]; %#ok<AGROW>
-        nR = numel(order);
-        nc = 5; nr = ceil(nR / nc);
-        tl = tiledlayout(fig, nr, nc, 'TileSpacing', 'tight', 'Padding', 'tight');
-
         nF_full = size(gd.dfof_all, 1);
         [f0, f1] = montage_window(tax, stim_frame, win_pre, win_post, nF_full);
         fidx  = f0:f1;
@@ -1015,34 +1170,59 @@ function figs = plot_oneap_marginal(groups, config)
         tfull = tax.from_ms(((1:nF_full) - stim_frame) * frame_dur);  % FULL-trace axis
         xwin  = [t(1) t(end)];                                        % initial x-window
 
-        for k = 1:nR
-            roi = order(k);
-            nexttile(tl, k); hold on;
-            % Whole trace plotted; view starts on the stim window, drag to scroll.
-            plot(tfull, gd.dfof_all(:, roi), 'k-', 'LineWidth', 1);
-            if isfinite(gd.upper_threshold(roi))
-                yline(gd.upper_threshold(roi), 'g:', 'LineWidth', 1);
+        [nr, nc, per, nP] = montage_grid(numel(order), mc);
+        for pg = 1:nP
+            pidx = order((pg-1)*per + 1 : min(pg*per, numel(order)));
+            ptxt = page_text(pg, nP);
+            fig = figure('Name', sprintf('OneAP Marginal responders %s%s', gd.name, ptxt), ...
+                'Position', [50 40 1850 1000], 'Color', 'w');
+            figs = [figs, fig]; %#ok<AGROW>
+            tl = tiledlayout(fig, nr, nc, 'TileSpacing', 'tight', 'Padding', 'tight');
+
+            for k = 1:numel(pidx)
+                roi = pidx(k);
+                nexttile(tl, k); hold on;
+                % Whole trace plotted; view starts on the stim window, drag to scroll.
+                plot(tfull, gd.dfof_all(:, roi), 'k-', 'LineWidth', 1);
+                if isfinite(gd.upper_threshold(roi))
+                    yline(gd.upper_threshold(roi), 'g:', 'LineWidth', 1);
+                end
+                if isfinite(gd.lower_threshold(roi))
+                    yline(gd.lower_threshold(roi), 'c:', 'LineWidth', 1);
+                end
+                if ~isempty(ylim_fixed), ylim(montage_ylim(ylim_fixed, gd.dfof_all(fidx, roi))); end
+                xline(0, '--', 'Color', 'k', 'LineWidth', 1);
+                plot_peak_markers(gd, roi, stim_frame, frame_dur, 1, nF_full, ...
+                    config.oneAP.sync_window_ms, config.oneAP.async_window_ms, tax);
+                plot_tau_fit(gd, roi, stim_frame, frame_dur, nF_full, tax);
+                snr_roi = gd.peak_amplitude(roi) / gd.prestim_sd(roi);
+                title(sprintf('%s SNR=%.1f', unit_label(gd, roi), snr_roi), ...
+                    'FontSize', 8, 'Interpreter', 'tex');
+                set(gca, 'FontSize', 7); grid on; box on;
+                scroll_time_axis(gca, xwin);   % show stim window; drag to scroll x
+                setappdata(gca, 'ymin', config.visualization.ymin_montage);   % see apply_ymin_zero
             end
-            if isfinite(gd.lower_threshold(roi))
-                yline(gd.lower_threshold(roi), 'c:', 'LineWidth', 1);
-            end
-            ylim(ylim_fixed);
-            xline(0, '--', 'Color', 'k', 'LineWidth', 1);
-            plot_peak_markers(gd, roi, stim_frame, frame_dur, 1, nF_full, ...
-                config.oneAP.sync_window_ms, config.oneAP.async_window_ms, tax);
-            plot_tau_fit(gd, roi, stim_frame, frame_dur, nF_full, tax);
-            snr_roi = gd.peak_amplitude(roi) / gd.prestim_sd(roi);
-            title(sprintf('%s SNR=%.1f', unit_label(gd, roi), snr_roi), ...
-                'FontSize', 8, 'Interpreter', 'tex');
-            set(gca, 'FontSize', 7); grid on; box on;
-            scroll_time_axis(gca, xwin);   % show stim window; drag to scroll x
+            title(tl, sprintf(['1AP marginal responders: %s%s (weakest evoked calls, ' ...
+                'low SNR first; drag to scroll x; green=%g\\sigma, cyan=%g\\sigma, ' ...
+                'blue=sync peak, red=async peak, magenta=\\tau fit; x in %s)'], gd.name, ptxt, ...
+                config.oneAP.upper_threshold_sigma, config.oneAP.lower_threshold_sigma, tax.unit), ...
+                'FontSize', 12, 'FontWeight', 'bold', 'Interpreter', 'tex');
         end
-        title(tl, sprintf(['1AP marginal responders: %s (weakest evoked calls, ' ...
-            'low SNR first; drag to scroll x; green=%g\\sigma, cyan=%g\\sigma, ' ...
-            'blue=sync peak, red=async peak, magenta=\\tau fit; x in %s)'], gd.name, ...
-            config.oneAP.upper_threshold_sigma, config.oneAP.lower_threshold_sigma, tax.unit), ...
-            'FontSize', 12, 'FontWeight', 'bold', 'Interpreter', 'tex');
     end
+end
+
+function yl = montage_ylim(ylim_fixed, seg)
+    % Shared montage y-range, with the top raised (10% headroom) when the trace
+    % in the initial view window goes above it, so large responses aren't cut.
+    seg = seg(isfinite(seg));
+    top = ylim_fixed(2);
+    if ~isempty(seg), top = max(top, 1.1 * max(seg)); end
+    yl = [ylim_fixed(1), top];
+end
+
+function s = page_text(pg, nP)
+    % ' (page 2/3)' suffix for multi-page montages; '' for a single page.
+    if nP > 1, s = sprintf(' (page %d/%d)', pg, nP); else, s = ''; end
 end
 
 function s = unit_label(gd, u)
@@ -1083,9 +1263,12 @@ function plot_peak_markers(gd, roi, stim_frame, frame_dur, f0, f1, sync_win, asy
         yv = gd.dfof_all(fr, roi);
         if ~isfinite(yv), continue; end
         xx = tax.from_ms(tt);   % display units from stim
-        if tt >= sync_win(1) && tt <= sync_win(2)
+        % Classify on frame offsets, as oneap_analyzer does (no ms edge cut).
+        k = fr - stim_frame;
+        sw = round(sync_win / frame_dur); aw = round(async_win / frame_dur);
+        if k >= sw(1) && k <= sw(2)
             plot(xx, yv, 'o', 'MarkerEdgeColor', 'b', 'MarkerFaceColor', 'b', 'MarkerSize', 5);
-        elseif tt > async_win(1) && tt <= async_win(2)
+        elseif k > aw(1) && k <= aw(2)
             plot(xx, yv, 'o', 'MarkerEdgeColor', 'r', 'MarkerFaceColor', 'r', 'MarkerSize', 5);
         end
     end
@@ -1157,6 +1340,52 @@ function T = build_roi_table(groups)
             'n_valid_trials', 'n_success', 'p_response', 'potency', 'efficacy'});
     end
     T = vertcat(parts{:});
+end
+
+function T = build_coverslip_table(groups)
+    % One row per coverslip: the per-coverslip values the statistics compare
+    % (same definitions as coverslip_means / coverslip_means_roi /
+    % coverslip_resp_frac / coverslip_async_frac), plus peak / time-to-peak /
+    % AUC of the coverslip's selection-free average trace (gd.cs_avg).
+    trialF = {'peak_amplitude', 'time_to_peak_ms', 'auc', 'auc_sync', 'auc_async', 'tau_ms'};
+    roiF   = {'roi_p_response', 'roi_potency', 'roi_efficacy'};
+    rows = {};
+    for g = 1:numel(groups)
+        gd = groups(g);
+        uniq = unique(gd.coverslip_of_roi, 'stable');
+        for i = 1:numel(uniq)
+            mu = strcmp(gd.coverslip_of_roi, uniq{i});     % (ROI, trial) units
+            mr = strcmp(gd.roi_coverslip, uniq{i});        % physical ROIs
+            act = mr & gd.roi_active;
+            s = gd.sync_count(mu); a = gd.async_count(mu);
+            row = {gd.genotype, gd.drug, uniq{i}, numel(unique(gd.region_of_roi(mu))), ...
+                nnz(mr), nnz(act), nnz(mu), nnz(mu & gd.is_responder), mean(gd.is_responder(mu))};
+            for f = 1:numel(trialF)
+                v = gd.(trialF{f})(mu & gd.is_responder);
+                row{end+1} = safemean(v(isfinite(v))); %#ok<AGROW>
+            end
+            for f = 1:numel(roiF)
+                v = gd.(roiF{f})(act);
+                row{end+1} = safemean(v(isfinite(v))); %#ok<AGROW>
+            end
+            if sum(s) + sum(a) > 0, row{end+1} = sum(a) / (sum(s) + sum(a)); %#ok<AGROW>
+            else, row{end+1} = NaN; end %#ok<AGROW>
+            k = find(strcmp({gd.cs_avg.cs}, uniq{i}), 1);
+            if isempty(k), row = [row, {NaN, NaN, NaN}]; %#ok<AGROW>
+            else, row = [row, {gd.cs_avg(k).peak, gd.cs_avg(k).ttp_ms, gd.cs_avg(k).auc}]; %#ok<AGROW>
+            end
+            rows(end+1, :) = row; %#ok<AGROW>
+        end
+    end
+    names = [{'genotype', 'drug', 'coverslip', 'n_regions', 'n_rois', 'n_active_rois', ...
+        'n_trials', 'n_success', 'success_rate'}, trialF, ...
+        {'p_response', 'potency', 'efficacy', 'async_fraction', ...
+        'avg_trace_peak', 'avg_trace_ttp_ms', 'avg_trace_auc'}];
+    if isempty(rows)
+        T = cell2table(cell(0, numel(names)), 'VariableNames', names);
+    else
+        T = cell2table(rows, 'VariableNames', names);
+    end
 end
 
 function print_summary(groups, comparisons)
