@@ -99,8 +99,8 @@ function config = tracenorm_config()
     config.oneAP = struct();
     config.oneAP.epoch_pre_ms       = 1000;     % Pre-stim baseline kept per trial epoch
     config.oneAP.epoch_post_ms      = 1500;     % Post-stim trace kept per trial epoch
-    config.oneAP.sync_window_ms     = [0, 15];  % Synchronous release window (timing label)
-    config.oneAP.async_window_ms    = [15, 250];% Asynchronous release window (timing label)
+    config.oneAP.sync_window_ms     = [0, 10];  % Synchronous release window (timing label)
+    config.oneAP.async_window_ms    = [10, 250];% Asynchronous release window (timing label)
                                                 % Evoked iGlu peak lands ~15-35 ms post-stim
                                                 % (median ~25 ms), so the responder call and
                                                 % amplitude use the LARGEST peak, not the sync window.
@@ -108,8 +108,8 @@ function config = tracenorm_config()
     config.oneAP.auc_window_ms      = [0, 250]; % Area-under-curve window (baseline-subtracted)
     config.oneAP.tau_peak_window_ms = 50;       % Decay-onset peak searched in [0, this] post-stim
     config.oneAP.tau_min_r2         = 0.5;      % Min fit R^2 to keep a decay tau
-    config.oneAP.baseline_guard_ms  = 0;        % Time before stim dropped from baseline (settling)
-    config.oneAP.upper_threshold_sigma  = 3.0;  % Event / responder threshold (peak height)
+    config.oneAP.baseline_guard_ms  = 100;        % Time before stim dropped from baseline (settling)
+    config.oneAP.upper_threshold_sigma  = 5.0;  % Event / responder threshold (peak height)
     config.oneAP.lower_threshold_sigma  = 1.5;  % Lower threshold (reference / decay end)
     config.oneAP.min_peak_distance_ms   = 10;   % Min spacing between detected peaks (findpeaks)
     config.oneAP.min_frames_above_lower = 2;    % Schmitt validation: after a peak crosses the UPPER
@@ -159,7 +159,7 @@ function config = tracenorm_config()
                                                 % to stim1). 10 ms = 2 frames at 5 ms, 1 frame at 10 ms.
                                                 % Longer = less noisy but, at short ISI, sits further
                                                 % down pulse 1's rise and underestimates the residual.
-    config.twoAP.baseline_guard_ms  = 0;        % Time before stim1 dropped from baseline
+    config.twoAP.baseline_guard_ms  = 100;        % Time before stim1 dropped from baseline
     config.twoAP.tau_peak_window_ms = 50;       % Decay-onset peak window (post-stim2)
     config.twoAP.tau_min_r2         = 0.5;
     config.twoAP.upper_threshold_sigma  = 3.5;  % Responder threshold (peak must clear this)
@@ -268,7 +268,7 @@ function config = tracenorm_config()
     %% Corrected Schmitt trigger (spontaneous event detection)
     %% ======================================================================
     config.corrected_schmitt = struct();
-    config.corrected_schmitt.upper_threshold_sigma = 3.5;  % Event start
+    config.corrected_schmitt.upper_threshold_sigma = 4;  % Event start
     config.corrected_schmitt.lower_threshold_sigma = 1.5;  % Event end
     config.corrected_schmitt.min_event_duration    = 3;    % frames (validation)
     config.corrected_schmitt.merge_gap_frames      = 2;    % Merge events <= this many frames apart

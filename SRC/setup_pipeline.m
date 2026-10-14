@@ -51,7 +51,7 @@ function setup_pipeline()
         'group_color', 'visualization/group_color.m';                  % shared: genotype x drug colour
         'spont_group_labels', 'visualization/spont_group_labels.m';    % spont: pair labels/colours
         'check_stim_frames', 'io/check_stim_frames.m';                 % loader: refined vs TTL stim frames
-        'parse_drug', 'io/parse_drug.m';                               % shared: drug from filename
+        'parse_drug', 'io/parse_drug.m';                             % shared: drug from filename
         'parse_group', 'io/parse_group.m';                             % shared: config-driven group parse
         'parse_coverslip_id', 'io/parse_coverslip_id.m';               % shared: coverslip id
         'parse_isi_ms', 'io/parse_isi_ms.m';                           % shared: PPF ISI from filename
@@ -123,8 +123,9 @@ function setup_pipeline()
             fprintf('  run_pipeline    %% mode (1AP / 2AP / Spont) from tracenorm_config.dataType\n');
             fprintf('\nNew Features:\n');
             fprintf('  • Corrected Schmitt trigger (includes outliers in noise calculation)\n');
-            fprintf('  • Proper sustained event exclusion (≥7 frames)\n');
-            fprintf('  • 3-frame validation period for biological events\n');
+            cs = config.corrected_schmitt;
+            fprintf('  • Proper sustained event exclusion (≥%d frames)\n', cs.noise_exclusion_window);
+            fprintf('  • %d-frame validation period for biological events\n', cs.min_event_duration);
             fprintf('  • Backward compatibility with legacy detector\n');
             fprintf('  • Enhanced noise estimation and thresholding\n');
             
@@ -151,14 +152,16 @@ function setup_pipeline()
     else
         % Display algorithm summary
         fprintf('\n=== Algorithm Summary ===\n');
-        fprintf('CORRECTED Schmitt Trigger Logic:\n');
+        cs = config.corrected_schmitt;
+        fprintf('CORRECTED Schmitt Trigger Logic (values from tracenorm_config):\n');
         fprintf('  1. Include outliers in noise calculation (they ARE noise)\n');
-        fprintf('  2. Exclude sustained biological events (≥7 frames) from noise\n');
-        fprintf('  3. Calculate thresholds: 3.5σ upper, 1.5σ lower\n');
+        fprintf('  2. Exclude sustained biological events (≥%d frames) from noise\n', cs.noise_exclusion_window);
+        fprintf('  3. Calculate thresholds: %.1fσ upper, %.1fσ lower\n', ...
+            cs.upper_threshold_sigma, cs.lower_threshold_sigma);
         fprintf('  4. Event starts when crossing above upper threshold\n');
-        fprintf('  5. Validate: must stay above lower threshold for ≥3 frames\n');
+        fprintf('  5. Validate: must stay above lower threshold for ≥%d frames\n', cs.min_event_duration);
         fprintf('  6. Event ends when dropping below lower threshold\n');
-        fprintf('  7. Merge nearby events (≤2 frame gap)\n');
+        fprintf('  7. Merge nearby events (≤%d frame gap)\n', cs.merge_gap_frames);
         fprintf('\nKey Difference from Legacy:\n');
         fprintf('  Legacy: Excludes outliers from noise → UNDERESTIMATES noise\n');
         fprintf('  Corrected: Includes outliers in noise → REALISTIC noise estimation\n');

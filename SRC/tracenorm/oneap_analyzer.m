@@ -60,6 +60,7 @@ function res = oneap_analyzer(dfof_data, baseline_stats, config)
         prestim_end = stim_frame - 1 - guard_frames;
         prestim_idx = 1:max(prestim_end, 1);
     end
+    pre_outliers = prestim_outlier_mask(baseline_stats, numel(prestim_idx), numROIs);
 
     ms2frame = @(t) stim_frame + round(t / frame_dur);
 
@@ -111,8 +112,12 @@ function res = oneap_analyzer(dfof_data, baseline_stats, config)
     analyzed        = false(1, numROIs);
     noise_excluded  = false(1, numROIs);   % dropped: pre-stim noise > max_noise_sd
 
-    sync_lo = p.sync_window_ms(1);  sync_hi = p.sync_window_ms(2);
-    async_lo = p.async_window_ms(1); async_hi = p.async_window_ms(2);
+    % Sync/async edges in FRAMES from stim, rounded like the AUC windows above.
+    % Peak times sit on the frame grid (k * frame_dur, e.g. 10.0075 ms), so a
+    % ms comparison against a round edge (t <= 10) silently drops the frame
+    % that lands just past it; comparing frame offsets avoids that.
+    [sync_lo_f, sync_hi_f]   = deal(round(p.sync_window_ms(1)  / frame_dur), round(p.sync_window_ms(2)  / frame_dur));
+    [async_lo_f, async_hi_f] = deal(round(p.async_window_ms(1) / frame_dur), round(p.async_window_ms(2) / frame_dur));
 
     for roi = 1:numROIs
         trace = dfof_data(:, roi);
@@ -122,12 +127,14 @@ function res = oneap_analyzer(dfof_data, baseline_stats, config)
         end
 
         % --- Pre-stim noise -> thresholds (dF/F units) ---
-        pre = trace(prestim_idx);
-        pre = pre(isfinite(pre));
+        % Baseline level excludes prestim_baseline's outlier frames (same frames
+        % as F0); the SD keeps all frames, as the spont noise estimate does.
+        pre_raw = trace(prestim_idx);
+        pre = pre_raw(isfinite(pre_raw));
         if numel(pre) < 5
             continue;
         end
-        base_mean = mean(pre);
+        base_mean = prestim_base_mean(pre_raw, pre_outliers(:, roi));
         sd = mad(pre, 1) * 1.4826;          % robust SD
         if ~isfinite(sd) || sd <= 0
             sd = std(pre);
@@ -201,9 +208,10 @@ function res = oneap_analyzer(dfof_data, baseline_stats, config)
 
             % Classify each peak by timing (synchronous vs asynchronous release).
             % This is a label only - it does NOT decide responder status.
-            if t_ms >= sync_lo && t_ms <= sync_hi
+            k_f = pk_abs - stim_frame;                   % frames from stim
+            if k_f >= sync_lo_f && k_f <= sync_hi_f
                 sync_count(roi) = sync_count(roi) + 1;
-            elseif t_ms > async_lo && t_ms <= async_hi
+            elseif k_f > async_lo_f && k_f <= async_hi_f
                 async_count(roi) = async_count(roi) + 1;
             end
 
@@ -289,7 +297,8 @@ function res = oneap_analyzer(dfof_data, baseline_stats, config)
     %   2 responder_async - responder whose largest peak is in the async window
     %   3 subthreshold    - analyzable but no peak cleared the threshold
     %   4 noise_excluded  - dropped by the pre-stim noise ceiling (max_noise_sd)
-    peak_is_sync = is_responder & (time_to_peak_ms >= sync_lo) & (time_to_peak_ms <= sync_hi);
+    ttp_f = peak_frame - stim_frame;                     % frames from stim (NaN if none)
+    peak_is_sync = is_responder & (ttp_f >= sync_lo_f) & (ttp_f <= sync_hi_f);
     qc_category = zeros(1, numROIs);
     qc_category(analyzed)          = 3;   % subthreshold (default)
     qc_category(total_events >= 1) = 2;   % responder, largest peak asynchronous

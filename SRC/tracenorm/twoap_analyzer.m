@@ -80,6 +80,7 @@ function res = twoap_analyzer(dfof_data, baseline_stats, config)
         guard_frames = round(getfielddef(p, 'baseline_guard_ms', 0) / frame_dur);
         prestim_idx  = 1:max(stim1 - 1 - guard_frames, 1);
     end
+    pre_outliers = prestim_outlier_mask(baseline_stats, numel(prestim_idx), numROIs);
 
     % --- Preallocate ------------------------------------------------------
     prestim_sd      = nan(1, numROIs);
@@ -114,10 +115,12 @@ function res = twoap_analyzer(dfof_data, baseline_stats, config)
         trace = dfof_data(:, roi);
         if all(isnan(trace)), continue; end
 
-        pre = trace(prestim_idx);
-        pre = pre(isfinite(pre));
+        % Baseline level excludes prestim_baseline's outlier frames (same frames
+        % as F0); SD and the excursion ceiling keep all frames.
+        pre_raw = trace(prestim_idx);
+        pre = pre_raw(isfinite(pre_raw));
         if numel(pre) < 5, continue; end
-        base_mean = mean(pre);
+        base_mean = prestim_base_mean(pre_raw, pre_outliers(:, roi));
         sd = mad(pre, 1) * 1.4826;
         if ~isfinite(sd) || sd <= 0, sd = std(pre); end
         if ~isfinite(sd) || sd <= 0, continue; end
