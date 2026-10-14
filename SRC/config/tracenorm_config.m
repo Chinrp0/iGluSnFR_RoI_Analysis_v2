@@ -48,6 +48,11 @@ function config = tracenorm_config()
     config.metadata.interval_tol_frac = 0.001;     % Files pooled in one run must
                                                    % share Frame_Interval_ms to
                                                    % within this fraction.
+    % Recordings you have decided to drop (artefacts, non-responders, ...) are
+    % listed per data folder in this file, next to Recordings.csv, with columns
+    % Mean_CSV,Reason. Kept with the data (not here) because the same filenames
+    % recur across experiment dates. Optional; absent = nothing excluded.
+    config.metadata.exclusion_filename = 'Excluded.csv';
     % Refined vs TTL stim frames (io/check_stim_frames.m). The macro refines each
     % TTL frame from the FULL field of view; the loader checks it against the
     % analysed ROIs' response onset and switches a trial to the TTL frame only

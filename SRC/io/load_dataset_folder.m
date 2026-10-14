@@ -18,6 +18,10 @@ function dataset = load_dataset_folder(folder, config)
     % ROIs' response onset and switches a trial to TTL only when the refined
     % frame is impossible; overrides are printed, added to the file's flags and
     % listed in the summary's stim_check column.
+    %   excluded      - recording listed in the folder's Excluded.csv
+    %                   (config.metadata.exclusion_filename; Mean_CSV,Reason),
+    %                   i.e. dropped by hand after inspection. Entries matching
+    %                   no Recordings.csv row are warned about (likely typos).
     %
     % Inputs:
     %   folder - raw-mean folder (holds the _mean.csv files and Recordings.csv)
@@ -26,7 +30,7 @@ function dataset = load_dataset_folder(folder, config)
     % Output: dataset struct with
     %   .folder, .metadata_file, .loaded_at
     %   .files(k)   - .name .path .genotype .drug .coverslip .region .raw .meta
-    %   .validation - .missing_data .orphan_files .rejected (cellstr / struct)
+    %   .validation - .missing_data .orphan_files .rejected .excluded
     %   .summary    - table, one row per metadata row or orphan file
 
     if nargin < 2 || isempty(config)
@@ -53,9 +57,21 @@ function dataset = load_dataset_folder(folder, config)
 
     %% Two-way cross-check: metadata rows <-> data files
     data_files = list_data_files(folder);
-    data_files = data_files(~strcmpi({data_files.name}, config.metadata.filename));
+    data_files = data_files(~strcmpi({data_files.name}, config.metadata.filename) & ...
+        ~strcmpi({data_files.name}, config.metadata.exclusion_filename));
     data_names = {data_files.name};
     meta_names = {recs.mean_csv};
+
+    %% Hand exclusions (optional Excluded.csv in the folder)
+    excluded = read_exclusions(folder, csvs, config.metadata.exclusion_filename);
+    unknown  = ~ismember(lower({excluded.name}), lower(meta_names));
+    for k = find(unknown)
+        warning('load_dataset_folder:unknownExclusion', ...
+            '%s lists "%s", which is not in %s (typo?).', ...
+            config.metadata.exclusion_filename, excluded(k).name, config.metadata.filename);
+    end
+    excluded = excluded(~unknown);
+    is_excl  = ismember(lower(meta_names), lower({excluded.name}));
 
     [~, dup_idx] = unique(lower(meta_names), 'stable');
     if numel(dup_idx) < numel(meta_names)
@@ -67,7 +83,7 @@ function dataset = load_dataset_folder(folder, config)
 
     in_folder = ismember(lower(meta_names), lower(data_names));
     has_meta  = ismember(lower(data_names), lower(meta_names));
-    missing_data = meta_names(~in_folder);
+    missing_data = meta_names(~in_folder & ~is_excl);   % excluded files may be removed
     orphan_files = data_names(~has_meta);
     for k = 1:numel(missing_data)
         warning('load_dataset_folder:missingData', ...
@@ -86,8 +102,12 @@ function dataset = load_dataset_folder(folder, config)
     status   = repmat({'loaded'}, numel(recs), 1);
     stim_note = repmat({''}, numel(recs), 1);
     status(~in_folder) = {'missing data file'};
+    for i = find(is_excl)
+        k = find(strcmpi({excluded.name}, meta_names{i}), 1);
+        status{i} = ['excluded: ' excluded(k).reason];
+    end
 
-    for i = find(in_folder)
+    for i = find(in_folder & ~is_excl)
         r = recs(i);
         fpath = fullfile(folder, data_names{find(strcmpi(data_names, r.mean_csv), 1)});
         reason = check_metadata_row(r);
@@ -165,15 +185,40 @@ function dataset = load_dataset_folder(folder, config)
     if isempty(files), dataset.dataType = {}; else, dataset.dataType = unique({files.dataType}, 'stable'); end
     dataset.recordings    = recs;
     dataset.validation    = struct('missing_data', {missing_data}, ...
-        'orphan_files', {orphan_files}, 'rejected', rejected);
+        'orphan_files', {orphan_files}, 'rejected', rejected, 'excluded', excluded);
     dataset.summary       = summary;
 
-    fprintf('Loaded %d/%d metadata recordings | %d missing data file | %d orphan file | %d rejected\n', ...
-        numel(files), nM, numel(missing_data), numel(orphan_files), numel(rejected));
+    fprintf(['Loaded %d/%d metadata recordings | %d missing data file | %d orphan file | ' ...
+        '%d rejected | %d excluded (%s)\n'], numel(files), nM, numel(missing_data), ...
+        numel(orphan_files), numel(rejected), numel(excluded), config.metadata.exclusion_filename);
     if numel(files) < nM || ~isempty(orphan_files)
         disp(summary(~strcmp(summary.status, 'loaded'), :));
     end
     print_group_counts(files);
+end
+
+function ex = read_exclusions(folder, csvs, fname)
+    % Rows of the folder's exclusion file as struct(.name, .reason). The file is
+    % optional; columns are Mean_CSV and Reason (Reason may be left blank).
+    ex = struct('name', {}, 'reason', {});
+    hit = strcmpi({csvs.name}, fname);
+    if ~any(hit), return; end
+    p = fullfile(folder, csvs(find(hit, 1)).name);
+    opts = detectImportOptions(p, 'TextType', 'char', 'Delimiter', ',');
+    opts = setvartype(opts, 'char');
+    T = readtable(p, opts);
+    if ~ismember('Mean_CSV', T.Properties.VariableNames)
+        error('load_dataset_folder:exclusionFormat', ...
+            '%s needs a Mean_CSV column (and optionally Reason).', p);
+    end
+    for k = 1:height(T)
+        nm = strtrim(T.Mean_CSV{k});
+        if isempty(nm), continue; end
+        rs = '';
+        if ismember('Reason', T.Properties.VariableNames), rs = strtrim(T.Reason{k}); end
+        if isempty(rs), rs = 'no reason given'; end
+        ex(end+1) = struct('name', nm, 'reason', rs); %#ok<AGROW>
+    end
 end
 
 function reason = check_metadata_row(r)
