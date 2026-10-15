@@ -3,12 +3,6 @@ function plot_handles = baseline_plotter_clean(raw_data, baseline, dfof_data, ou
     % Red highlighted events are sufficient for visualization
     % UPDATED: New ROI activity bins + Figure 4 (least active ROIs)
     
-    % Handle backward compatibility
-    if nargin < 9
-        event_stats = create_empty_event_stats(size(raw_data));
-        fprintf('Warning: No event_stats provided, using empty event data\n');
-    end
-    
     % Extract event_mask consistently
     if isfield(event_stats, 'event_mask')
         event_mask = event_stats.event_mask;
@@ -477,25 +471,6 @@ function sample_rois = select_diverse_rois(event_stats, num_samples)
     end
     
     sample_rois = sort(sample_rois(1:num_samples));
-end
-
-function event_stats = create_empty_event_stats(data_size)
-    % Create empty event stats for backward compatibility
-    
-    [numFrames, numROIs] = data_size;
-    
-    event_stats = struct();
-    event_stats.events_per_roi = zeros(1, numROIs);
-    event_stats.total_events = 0;
-    event_stats.rois_with_events = 0;
-    event_stats.event_mask = false(numFrames, numROIs);
-    event_stats.upper_thresholds = zeros(1, numROIs);
-    event_stats.lower_thresholds = zeros(1, numROIs);
-    
-    event_stats.event_summary = struct();
-    event_stats.event_summary.total_events = 0;
-    event_stats.event_summary.rois_with_events = 0;
-    event_stats.event_summary.fraction_active_rois = 0;
 end
 
 function fig = create_empty_plot(fig_name, message)
