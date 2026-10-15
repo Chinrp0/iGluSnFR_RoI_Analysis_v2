@@ -101,9 +101,15 @@ for p = 1:numel(parts)
     if cfg.visualization.y_min_zero
         apply_ymin_zero();
     end
-    if cfg.visualization.show_frame_time
-        annotate_frame_time(median(arrayfun(@(f) f.meta.frame_interval_ms, part.files)));
+    info = [];
+    if cfg.visualization.show_experiment_info
+        info = experiment_info(dataset.folder, part.files, cfg);
     end
+    frame_ms = [];
+    if cfg.visualization.show_frame_time
+        frame_ms = median(arrayfun(@(f) f.meta.frame_interval_ms, part.files));
+    end
+    annotate_figure_info(info, frame_ms);
 
     % Each frame-interval set gets its own sub-folder when there are several.
     if numel(parts) > 1

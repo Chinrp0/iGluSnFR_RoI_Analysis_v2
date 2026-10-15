@@ -323,9 +323,18 @@ function config = tracenorm_config()
     config.visualization.y_min_zero      = true;
     config.visualization.ymin_montage    = -0.02;   % per-ROI trace montages / example traces
     config.visualization.ymin_mean_trace = -0.005;  % group / coverslip mean traces
-    % Print "Frame time: <ms> ms (<Hz> Hz)" (from Recordings.csv) in the corner
-    % of every figure with a time axis or time-based metric (annotate_frame_time).
-    config.visualization.show_frame_time = true;
+    % Corner label (annotate_figure_info), e.g.
+    %   "Snfr4f | 2026-10-06 | Frame time: 10 ms (100 Hz)"
+    % Sensor + experiment date go on every figure; they are read from the data
+    % folder's path (experiment_info): date = leading yyyy-mm-dd of the nearest
+    % folder name that starts with one, sensor = SnFR/iGlu token in the folder
+    % names (else the file name). Set sensor / experiment_date to override.
+    % Frame time (from Recordings.csv) only on figures with a time axis or
+    % time-based metric.
+    config.visualization.show_experiment_info = true;
+    config.visualization.sensor               = '';   % '' = from folder name
+    config.visualization.experiment_date      = '';   % '' = from folder name
+    config.visualization.show_frame_time      = true;
 
     % --- Figure x-axis display units (time-based figures) ---------------------
     % Every time-from-stimulus axis (1AP/2AP average traces, PSTH, ROI
