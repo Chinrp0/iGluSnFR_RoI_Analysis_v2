@@ -26,6 +26,10 @@ function config = tracenorm_config()
     % (1AP -> '1AP', 2AP/PPF -> '2AP', HFS -> 'HFS', spontaneous -> 'Spont'). Set
     % '1AP' | '2AP' | 'HFS' | 'Spont' to insist on one; a folder of another type then errors.
     config.dataType    = 'auto';
+    if ~any(strcmpi(config.dataType, {'auto', '1AP', '2AP', 'HFS', 'Spont'}))
+        error('tracenorm_config:dataType', ...
+            'Unknown dataType "%s" (expected auto | 1AP | 2AP | HFS | Spont).', config.dataType);
+    end
 
     % Where the folder dialog opens (falls back to the current folder if this
     % drive/path is not available on this PC).
@@ -37,11 +41,15 @@ function config = tracenorm_config()
     %           folder again and frees the memory (~100 MB for a 5AP folder)
     config.keep_dataset = false;
 
+    config.verbose      = false;    % Detailed per-stage console output (detectors, dF/F)
+
     % Timing placeholders: NaN until apply_recording_timing() fills them from
     % Recordings.csv, so any code that reads them before that fails visibly.
-    config.exposure_ms    = NaN;    % ms per frame
-    config.frame_rate     = NaN;    % Hz
-    config.frame_dur_ms   = NaN;    % ms per frame (alias)
+    config.exposure_ms          = NaN;    % ms per frame
+    config.frame_rate           = NaN;    % Hz
+    config.frame_dur_ms         = NaN;    % ms per frame (alias)
+    config.expected_frames      = NaN;    % frames per analysed trace (or 1AP epoch)
+    config.recording_duration_s = NaN;
 
     %% ======================================================================
     %% METADATA (Recordings.csv, see io/read_recordings_metadata.m)
@@ -88,6 +96,18 @@ function config = tracenorm_config()
         'name',    {'WT',              'Doc2b-WT',      'Doc2b-R213W',      'R213W'}, ...
         'pattern', {'(^|_)WT(_|$)',    'Doc2b[-_]WT',   'Doc2b[-_]R213W',   '(^|_)R213W(_|$)'}, ...
         'color',   {[0.3 0.3 0.3],     [0.2 0.6 1.0],   [1.0 0.4 0.2],      [0.8 0.2 0.6]});
+
+    % DERIVED - do not edit. Legacy wt/mut colour aliases for older plotters;
+    % config.groups is the source of truth (use color_for/parse_group). Default
+    % to the WT/R213W groups, falling back to the first two configured groups.
+    wtIdx  = find(strcmpi({config.groups.name}, 'WT'),    1);
+    mutIdx = find(strcmpi({config.groups.name}, 'R213W'), 1);
+    if isempty(wtIdx),  wtIdx  = 1; end
+    if isempty(mutIdx), mutIdx = min(2, numel(config.groups)); end
+    config.visualization = struct();
+    config.visualization.colors = struct( ...
+        'wt',  config.groups(wtIdx).color, ...
+        'mut', config.groups(mutIdx).color);
 
     % Drug conditions (perfusion). parse_drug returns the "+token" after the
     % paradigm in lower case, or control_label when there is none. drug_order
@@ -145,7 +165,7 @@ function config = tracenorm_config()
     config.twoAP = struct();
     config.twoAP.epoch_pre_ms       = 1000;     % Pre-stim1 baseline kept per file
     config.twoAP.epoch_post_ms      = 2000;     % Post-stim1 trace kept (covers ISI <= 1000 ms
-                                                % + auc_post_ms / montage_post_ms)
+                                                % + auc_post_ms / visualization.montage.twoAP_post_ms)
     config.twoAP.isi_pattern        = 'PPF[\s_\-]*0*(\d+)\s*ms';  % ISI in filename (cross-check only)
     config.twoAP.peak_search_ms     = 40;       % Search [0, this] ms after each stim for that pulse's peak
                                                 % (capped at the ISI for pulse 1 so it can't reach pulse 2).
@@ -159,8 +179,6 @@ function config = tracenorm_config()
                                                 % +50 frames = 516). NB the window length = ISI + this, so it
                                                 % grows with ISI by construction: raw charge is ISI-dependent
                                                 % (interpret cross-ISI accordingly; no normalization applied).
-    config.twoAP.montage_pre_ms     = 250;      % Montage x-window: ms of trace shown BEFORE stim1 (to judge
-    config.twoAP.montage_post_ms    = 300;      % baseline/noise) and AFTER stim2 (to see the full decay).
     config.twoAP.sync_latency_ms    = 10;       % "Sync time-lock" PPR: read BOTH pulses at this fixed
                                                 % latency post-stim (the synchronous-release phase, before
                                                 % the peak). See the three PPR methods in twoap_analyzer.
@@ -243,16 +261,6 @@ function config = tracenorm_config()
     config.hfs.max_noise_sd          = 0.02;  % Drop ROIs whose pre-stim robust SD exceeds this
 
     %% ======================================================================
-    %% Frame count / duration (filled from Recordings.csv by apply_recording_timing)
-    %% ======================================================================
-    if ~any(strcmpi(config.dataType, {'auto', '1AP', '2AP', 'HFS', 'Spont'}))
-        error('tracenorm_config:dataType', ...
-            'Unknown dataType "%s" (expected auto | 1AP | 2AP | HFS | Spont).', config.dataType);
-    end
-    config.expected_frames      = NaN;
-    config.recording_duration_s = NaN;
-
-    %% ======================================================================
     %% Baseline (spontaneous rolling-median path)
     %% ======================================================================
     config.baseline_method       = 'iterative_rolling_median';
@@ -261,8 +269,7 @@ function config = tracenorm_config()
     config.outlier_threshold_sigma = 2.0;       % SDs for outlier detection
     config.max_iterations        = 3;           % Refinement iterations
 
-    config.verbose               = false;       % Suppress detailed console output
-    config.smooth_baseline       = false;       % Don't smooth final baseline
+    config.smooth_baseline      = false;       % Don't smooth final baseline
     config.smooth_method         = 'movmedian';
     config.smooth_window         = 5;           % frames
     config.transport_slope_threshold = 0.01;    % Baseline drift flag, in F units per SECOND
@@ -288,14 +295,6 @@ function config = tracenorm_config()
     config.corrected_schmitt.includes_outliers_in_noise = true;
     config.corrected_schmitt.excludes_sustained_events  = true;
 
-    %% === Legacy Schmitt trigger (kept for comparison / pure detector) ===
-    config.event_detection = struct();
-    config.event_detection.method = 'schmitt_trigger';
-    config.event_detection.upper_threshold_sigma = 3.0;
-    config.event_detection.lower_threshold_sigma = 1.5;
-    config.event_detection.min_event_duration    = 3;      % frames
-    config.event_detection.merge_gap_frames      = 2;      % frames
-
     %% ======================================================================
     %% Quality metrics
     %% ======================================================================
@@ -312,18 +311,9 @@ function config = tracenorm_config()
     config.quality.max_event_fraction    = 0.5;   % Max fraction of frames inside events
 
     %% ======================================================================
-    %% Temporal (filled from Recordings.csv by apply_recording_timing)
-    %% ======================================================================
-    config.temporal = struct();
-    config.temporal.frame_duration_ms    = config.frame_dur_ms;          % = exposure_ms
-    config.temporal.recording_duration_s = config.recording_duration_s;
-    config.temporal.max_iei_s            = 10;    % Max IEI plotted (s) (plot_iei_comparison)
-    config.temporal.bin_size_ms          = 50;    % Linear IEI histogram bin (ms)
-
-    %% ======================================================================
     %% Visualization
     %% ======================================================================
-    config.visualization = struct();
+    % (config.visualization was created under GROUPS for the colour aliases.)
     config.visualization.plot_baseline = true;
     config.visualization.plot_events   = true;
     % Start every data figure's y-axis at 0 (applied to all open figures after
@@ -336,17 +326,6 @@ function config = tracenorm_config()
     % Print "Frame time: <ms> ms (<Hz> Hz)" (from Recordings.csv) in the corner
     % of every figure with a time axis or time-based metric (annotate_frame_time).
     config.visualization.show_frame_time = true;
-    % Legacy convenience aliases; group colors are the source of truth in
-    % config.groups (use color_for/parse_group). Default to the WT/R213W groups,
-    % falling back to the first two configured groups so older plotters keep
-    % working even if the group names change.
-    wtIdx  = find(strcmpi({config.groups.name}, 'WT'),    1);
-    mutIdx = find(strcmpi({config.groups.name}, 'R213W'), 1);
-    if isempty(wtIdx),  wtIdx  = 1; end
-    if isempty(mutIdx), mutIdx = min(2, numel(config.groups)); end
-    config.visualization.colors = struct( ...
-        'wt',  config.groups(wtIdx).color, ...
-        'mut', config.groups(mutIdx).color);
 
     % --- Figure x-axis display units (time-based figures) ---------------------
     % Every time-from-stimulus axis (1AP/2AP average traces, PSTH, ROI
@@ -380,10 +359,14 @@ function config = tracenorm_config()
     config.visualization.montage.oneAP_pre_ms   = 150;  % Default window shown before the stim (resting noise)
     config.visualization.montage.oneAP_post_extra_ms = 150;   % ...and after the async window end
                                                              % (x_axis.montage_range_frames overrides both)
+    config.visualization.montage.twoAP_pre_ms   = 250;  % 2AP montage: ms shown BEFORE stim1 (baseline/noise)
+    config.visualization.montage.twoAP_post_ms  = 300;  % ...and AFTER stim2 (full decay)
 
     % --- Spontaneous figures ---------------------------------------------------
     config.visualization.spont = struct();
-    config.visualization.spont.freq_bin_hz         = 0.02;  % Event-frequency histogram bin (Hz)
+    config.visualization.spont.iei_max_s           = 10;    % Max IEI plotted (s) (plot_iei_comparison)
+    config.visualization.spont.iei_bin_ms          = 50;    % Linear IEI histogram bin (ms)
+    config.visualization.spont.freq_bin_hz        = 0.02;  % Event-frequency histogram bin (Hz)
     config.visualization.spont.box_max_points      = 5000;  % Amplitude box plot: random subsample above this
     config.visualization.spont.random_seed         = 1;     % Seed for that subsample (reproducible figures)
     config.visualization.spont.activity_bin_edges  = [1 2 4 6 8 10];  % Events/ROI categories: [1], [2-3],

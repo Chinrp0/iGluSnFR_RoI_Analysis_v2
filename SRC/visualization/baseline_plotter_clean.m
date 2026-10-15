@@ -423,9 +423,9 @@ function fig = create_event_summary_updated(event_stats, metadata, config)
         sprintf('6+ events: %d (%.1f%%)', six_plus_events, 100 * six_plus_events / total_rois);
         '';
         'Detection Settings:';
-        sprintf('Upper: %.1fσ, Lower: %.1fσ', config.event_detection.upper_threshold_sigma, ...
-            config.event_detection.lower_threshold_sigma);
-        sprintf('Decay Extension: %d frames', config.event_detection.decay_extension_frames);
+        sprintf('Upper: %.1fσ, Lower: %.1fσ', config.corrected_schmitt.upper_threshold_sigma, ...
+            config.corrected_schmitt.lower_threshold_sigma);
+        sprintf('Min Event Duration: %d frames', config.corrected_schmitt.min_event_duration);
     };
     
     text(0.05, 0.95, summary_text, 'FontSize', 9, 'VerticalAlignment', 'top', ...

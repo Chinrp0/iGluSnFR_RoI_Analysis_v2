@@ -60,8 +60,8 @@ function results = spont_batch_analysis(dataset, options)
     % The plot modules take the time base from options (rates, raster length).
     options.frame_rate           = config.frame_rate;
     options.recording_duration_s = config.recording_duration_s;
-    options.max_iei_s            = config.temporal.max_iei_s;     % IEI plot range
-    options.iei_bin_size_ms      = config.temporal.bin_size_ms;   % IEI histogram bin
+    options.max_iei_s            = config.visualization.spont.iei_max_s;   % IEI plot range
+    options.iei_bin_size_ms      = config.visualization.spont.iei_bin_ms;  % IEI histogram bin
     options.viz                  = config.visualization.spont;    % bins, subsampling, grids
     options.ymin_trace           = config.visualization.ymin_montage;  % example-trace y floor
     fprintf('  Frame interval %.4g ms (%.4g Hz), %d-%d frames (metadata)\n', ...

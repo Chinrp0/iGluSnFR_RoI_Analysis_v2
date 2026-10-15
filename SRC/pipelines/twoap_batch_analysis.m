@@ -679,8 +679,8 @@ function figs = plot_twoap_montage(groups, config)
         if isempty(resp), continue; end
         order = resp(1:min(maxROIs, numel(resp)));
 
-        pre_f  = round(config.twoAP.montage_pre_ms  / frame_dur);
-        post_f = round(config.twoAP.montage_post_ms / frame_dur);
+        pre_f  = round(config.visualization.montage.twoAP_pre_ms  / frame_dur);
+        post_f = round(config.visualization.montage.twoAP_post_ms / frame_dur);
         % Default window spans pre-stim1 .. post-stim2; montage_range_frames
         % (if set in config) overrides it with an absolute frame interval.
         nF_full = size(ref.dfof, 1);
@@ -813,8 +813,8 @@ function fig = render_cs_average_fig(groups, config, rows, rowGroup, isis, bandL
     % Render ONE coverslip grand-average figure for the given ISI subset (cols).
     frame_dur = config.frame_dur_ms;
     stim1     = config.twoAP.stim1_frame;
-    pre_f     = round(config.twoAP.montage_pre_ms  / frame_dur);
-    post_f    = round(config.twoAP.montage_post_ms / frame_dur);
+    pre_f     = round(config.visualization.montage.twoAP_pre_ms  / frame_dur);
+    post_f    = round(config.visualization.montage.twoAP_post_ms / frame_dur);
 
     nR = numel(rows); nC = numel(isis);
     fig = figure('Name', sprintf('2AP Coverslip grand-average dF/F - %s', bandLabel), ...

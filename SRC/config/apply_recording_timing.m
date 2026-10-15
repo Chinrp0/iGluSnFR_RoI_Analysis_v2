@@ -28,7 +28,4 @@ function config = apply_recording_timing(config, frame_interval_ms, n_frames)
     config.expected_frames      = n_frames;
     config.recording_duration_s = n_frames * frame_interval_ms / 1000;
     config.rolling_window_frames = round(config.rolling_window_sec * config.frame_rate);
-
-    config.temporal.frame_duration_ms    = frame_interval_ms;
-    config.temporal.recording_duration_s = config.recording_duration_s;
 end

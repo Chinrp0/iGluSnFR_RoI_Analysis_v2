@@ -22,8 +22,7 @@ function setup_pipeline()
         'tracenorm_config', 'config/tracenorm_config.m';
         'baseline_detector', 'tracenorm/baseline_detector.m';
         'dfof_calculator', 'tracenorm/dfof_calculator.m';
-        'corrected_schmitt_detector', 'tracenorm/corrected_schmitt_detector.m';  % NEW: Corrected detector
-        'pure_schmitt_trigger_detector', 'tracenorm/pure_schmitt_trigger_detector.m';  % Legacy
+        'corrected_schmitt_detector', 'tracenorm/corrected_schmitt_detector.m';
         'quality_assessor', 'tracenorm/quality_assessor.m';
         'baseline_plotter_clean', 'visualization/baseline_plotter_clean.m';
         'prestim_baseline', 'tracenorm/prestim_baseline.m';            % 1AP: pre-stim baseline
@@ -89,9 +88,6 @@ function setup_pipeline()
             fprintf('    - Corrected Schmitt: %.1f/%.1fσ (includes outliers in noise)\n', ...
                 config.corrected_schmitt.upper_threshold_sigma, ...
                 config.corrected_schmitt.lower_threshold_sigma);
-            fprintf('    - Legacy Schmitt: %.1f/%.1fσ (excludes outliers from noise)\n', ...
-                config.event_detection.upper_threshold_sigma, ...
-                config.event_detection.lower_threshold_sigma);
             fprintf('    - Noise exclusion window: %d frames\n', ...
                 config.corrected_schmitt.noise_exclusion_window);
             fprintf('    - Minimum event duration: %d frames\n', ...
@@ -105,11 +101,6 @@ function setup_pipeline()
             % Test corrected Schmitt detector
             if exist('corrected_schmitt_detector', 'file')
                 fprintf('  ✓ Corrected Schmitt trigger detector available\n');
-            end
-            
-            % Test legacy detector for comparison
-            if exist('pure_schmitt_trigger_detector', 'file')
-                fprintf('  ✓ Legacy Schmitt trigger detector available (for comparison)\n');
             end
             
             % Test quality assessor
@@ -126,7 +117,6 @@ function setup_pipeline()
             cs = config.corrected_schmitt;
             fprintf('  • Proper sustained event exclusion (≥%d frames)\n', cs.noise_exclusion_window);
             fprintf('  • %d-frame validation period for biological events\n', cs.min_event_duration);
-            fprintf('  • Backward compatibility with legacy detector\n');
             fprintf('  • Enhanced noise estimation and thresholding\n');
             
         catch ME
@@ -162,8 +152,5 @@ function setup_pipeline()
         fprintf('  5. Validate: must stay above lower threshold for ≥%d frames\n', cs.min_event_duration);
         fprintf('  6. Event ends when dropping below lower threshold\n');
         fprintf('  7. Merge nearby events (≤%d frame gap)\n', cs.merge_gap_frames);
-        fprintf('\nKey Difference from Legacy:\n');
-        fprintf('  Legacy: Excludes outliers from noise → UNDERESTIMATES noise\n');
-        fprintf('  Corrected: Includes outliers in noise → REALISTIC noise estimation\n');
     end
 end
