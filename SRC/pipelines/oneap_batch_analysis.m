@@ -133,8 +133,7 @@ function results = oneap_batch_analysis(dataset, options)
         fprintf('\nCreating 1AP figures...\n');
         plot_handles.average_traces = plot_oneap_average_traces(groups, config);
         plot_handles.cs_average     = plot_oneap_cs_average(groups, config);
-        plot_handles.amplitude      = plot_oneap_metric(groups, 'peak_amplitude', true, ...
-            'Evoked Peak Amplitude (\DeltaF/F)', 'Evoked Peak Amplitude (successful trials)', comparison, 'peak_amplitude');
+        plot_handles.amplitude      = plot_oneap_amplitude(groups, comparison);
         plot_handles.kinetics       = plot_oneap_kinetics(groups, comparison);
         plot_handles.auc_split      = plot_oneap_auc_split(groups, comparison);
         plot_handles.sync_async     = plot_oneap_sync_async(groups, config);
@@ -189,7 +188,9 @@ function gd = aggregate_group(fileResults, name, color)
     dfof_all = [];
     peak_amplitude = []; time_to_peak_ms = []; auc = []; tau_ms = []; tau_r2 = [];
     auc_sync = []; auc_async = [];
-    is_responder = []; prestim_sd = []; sync_count = []; async_count = [];
+    is_responder = []; prestim_sd = []; sync_count = []; async_count = []; n_spont = [];
+    release_events = struct('lat_ms', {}, 'onset_ms', {}, 'is_sync', {});
+    events_ms = struct('sync', NaN, 'async', NaN, 'spont', NaN); events_enabled = false;
     total_events = []; peak_frame = []; upper_threshold = []; lower_threshold = [];
     qc_category = []; crossed_upper = [];
     tau_A = []; tau_offset = []; tau_peak_frame = [];
@@ -204,6 +205,7 @@ function gd = aggregate_group(fileResults, name, color)
         if isempty(fr), continue; end
         o = fr.oneap;
         filenames{end+1} = fr.filename; %#ok<AGROW>
+        fi = numel(filenames);   % index into filenames (skipped files leave no gap)
 
         % Experimental unit = coverslip (Cs#). Multiple regions (c#) on one
         % coverslip are pseudoreplicates and must collapse to it before stats.
@@ -221,7 +223,7 @@ function gd = aggregate_group(fileResults, name, color)
         roi_n_success  = [roi_n_success,  rs.n_success];  %#ok<AGROW>
         roi_n_valid    = [roi_n_valid,    rs.n_valid];    %#ok<AGROW>
         roi_coverslip  = [roi_coverslip,  repmat({csid}, 1, fr.numROIs)]; %#ok<AGROW>
-        roi_file       = [roi_file,       repmat(i, 1, fr.numROIs)];      %#ok<AGROW>
+        roi_file       = [roi_file,       repmat(fi, 1, fr.numROIs)];     %#ok<AGROW>
         roi_index      = [roi_index,      1:fr.numROIs];                  %#ok<AGROW>
 
         peak_amplitude  = [peak_amplitude,  o.peak_amplitude];   %#ok<AGROW>
@@ -238,6 +240,11 @@ function gd = aggregate_group(fileResults, name, color)
         prestim_sd      = [prestim_sd,      o.prestim_sd];       %#ok<AGROW>
         sync_count      = [sync_count,      o.sync_count];       %#ok<AGROW>
         async_count     = [async_count,     o.async_count];      %#ok<AGROW>
+        n_spont         = [n_spont,         o.n_spont];          %#ok<AGROW>
+        release_events  = [release_events,  o.release_events];   %#ok<AGROW>
+        if o.events_enabled && isfield(o, 'events_ms')
+            events_enabled = true; events_ms = o.events_ms;
+        end
         total_events    = [total_events,    o.total_events];     %#ok<AGROW>
         peak_frame      = [peak_frame,      o.peak_frame];       %#ok<AGROW>
         upper_threshold = [upper_threshold, o.upper_threshold];  %#ok<AGROW>
@@ -245,7 +252,7 @@ function gd = aggregate_group(fileResults, name, color)
         qc_category     = [qc_category,     o.qc_category];       %#ok<AGROW>
         crossed_upper   = [crossed_upper,   o.crossed_upper];     %#ok<AGROW>
         event_peak_times_ms = [event_peak_times_ms, o.event_peak_times_ms]; %#ok<AGROW>
-        file_of_roi     = [file_of_roi,     repmat(i, 1, fr.numUnits)]; %#ok<AGROW>
+        file_of_roi     = [file_of_roi,     repmat(fi, 1, fr.numUnits)]; %#ok<AGROW>
 
         if isempty(temporal_hist_sum)
             temporal_hist_sum = sum(o.temporal_hist, 2);
@@ -280,6 +287,10 @@ function gd = aggregate_group(fileResults, name, color)
     gd.prestim_sd        = prestim_sd;
     gd.sync_count        = sync_count;
     gd.async_count       = async_count;
+    gd.n_spont           = n_spont;
+    gd.release_events    = release_events;
+    gd.events_enabled    = events_enabled;   % sync/async binning ran (fast frames)
+    gd.events_ms         = events_ms;        % sync / async / spont bin lengths (ms)
     gd.total_events      = total_events;
     gd.peak_frame        = peak_frame;
     gd.upper_threshold   = upper_threshold;
@@ -289,6 +300,7 @@ function gd = aggregate_group(fileResults, name, color)
     gd.event_peak_times_ms = event_peak_times_ms;
     gd.file_of_roi       = file_of_roi;
     gd.filenames         = filenames;
+    gd.file_ids          = file_ids(filenames);
     gd.coverslip_of_roi  = coverslip_of_roi;
     gd.region_of_roi     = region_of_roi;
     gd.temporal_hist_sum = temporal_hist_sum;
@@ -368,19 +380,30 @@ function fr = coverslip_async_frac(gd)
     % truncated at the lower threshold) or the peak-dominated AUC.
     %
     % Event-pooled (not ROI-averaged) so it matches the post-stim PSTH directly
-    % and avoids per-ROI 0/0 ratios. Coverslips with no classified events are
-    % dropped (NaN).
+    % and avoids per-ROI 0/0 ratios; async is spontaneous-subtracted as in 2AP
+    % (event_totals). Coverslips with no classified events are dropped (NaN).
     cs   = gd.coverslip_of_roi;
     uniq = unique(cs, 'stable');
     fr   = nan(1, numel(uniq));
     for i = 1:numel(uniq)
-        m   = strcmp(cs, uniq{i});
-        s   = sum(gd.sync_count(m));
-        a   = sum(gd.async_count(m));
-        tot = s + a;
-        if tot > 0, fr(i) = a / tot; end
+        [s, a] = event_totals(gd, strcmp(cs, uniq{i}));
+        if s + a > 0, fr(i) = a / (s + a); end
     end
     fr = fr(isfinite(fr));
+end
+
+function [s, a, a_raw, sp] = event_totals(gd, mask)
+    % Sync and async release-event totals over the (ROI, trial) units in MASK.
+    % The async count is spontaneous-subtracted like 2AP's async share: the
+    % pre-stim event rate of those units x the async bin length is removed
+    % (floored at 0). s / a are NaN when event binning did not run.
+    s = NaN; a = NaN; a_raw = NaN; sp = NaN;
+    if ~gd.events_enabled, return; end
+    if nargin < 2, mask = true(size(gd.sync_count)); end
+    s     = sum(gd.sync_count(mask), 'omitnan');
+    a_raw = sum(gd.async_count(mask), 'omitnan');
+    sp    = sum(gd.n_spont(mask), 'omitnan') * gd.events_ms.async / gd.events_ms.spont;
+    a     = max(a_raw - sp, 0);
 end
 
 function cs_avg = coverslip_average_traces(gd, config)
@@ -391,7 +414,8 @@ function cs_avg = coverslip_average_traces(gd, config)
     % the successful-trials-only mean (potency-like) and each region's (c#) mean,
     % to show the within-coverslip spread the average collapses.
     cs_avg = struct('cs', {}, 'trace', {}, 'sem', {}, 'n_units', {}, 'n_rois', {}, ...
-        'trace_resp', {}, 'n_resp', {}, 'regions', {}, 'peak', {}, 'ttp_ms', {}, 'auc', {});
+        'trace_resp', {}, 'sem_resp', {}, 'n_resp', {}, 'regions', {}, 'peak', {}, 'ttp_ms', {}, 'auc', {}, ...
+        'peak_resp', {}, 'auc_resp', {});
     if isempty(gd.dfof_all), return; end
     nU    = size(gd.dfof_all, 2);
     valid = gd.qc_category(1:nU) >= 1 & gd.qc_category(1:nU) <= 3;
@@ -406,8 +430,12 @@ function cs_avg = coverslip_average_traces(gd, config)
         mu  = mean(M, 2, 'omitnan')';
         sem = (std(M, 0, 2, 'omitnan') ./ sqrt(max(n, 1)))';
         mr  = m & gd.is_responder(1:nU);
-        tr  = nan(size(mu));
-        if any(mr), tr = mean(gd.dfof_all(:, mr), 2, 'omitnan')'; end
+        tr  = nan(size(mu)); ser = nan(size(mu));
+        if any(mr)
+            R   = gd.dfof_all(:, mr);
+            tr  = mean(R, 2, 'omitnan')';
+            ser = (std(R, 0, 2, 'omitnan') ./ sqrt(max(sum(isfinite(R), 2), 1)))';
+        end
         regions = struct('label', {}, 'trace', {}, 'n', {});
         ur = unique(rg(m), 'stable');
         for r = 1:numel(ur)
@@ -415,11 +443,13 @@ function cs_avg = coverslip_average_traces(gd, config)
             regions(end+1) = struct('label', ur{r}, ...                      %#ok<AGROW>
                 'trace', mean(gd.dfof_all(:, mm), 2, 'omitnan')', 'n', nnz(mm));
         end
-        [pk, ttp, a] = avg_trace_metrics(mu, config);
+        [pk, ttp, a]   = avg_trace_metrics(mu, config);
+        [pkr, ~, ar]   = avg_trace_metrics(tr, config);
         n_rois = size(unique([gd.file_of_roi(m); gd.unit_roi(m)]', 'rows'), 1);
         cs_avg(end+1) = struct('cs', uniq{i}, 'trace', mu, 'sem', sem, ...    %#ok<AGROW>
-            'n_units', nnz(m), 'n_rois', n_rois, 'trace_resp', tr, 'n_resp', nnz(mr), ...
-            'regions', regions, 'peak', pk, 'ttp_ms', ttp, 'auc', a);
+            'n_units', nnz(m), 'n_rois', n_rois, 'trace_resp', tr, 'sem_resp', ser, 'n_resp', nnz(mr), ...
+            'regions', regions, 'peak', pk, 'ttp_ms', ttp, 'auc', a, ...
+            'peak_resp', pkr, 'auc_resp', ar);
     end
 end
 
@@ -563,7 +593,7 @@ function fig = plot_oneap_average_traces(groups, config)
     yl = ylim;
     plot([0 0], yl, 'k--', 'LineWidth', 1, 'HandleVisibility', 'off');
     text(0, yl(2), ' stim', 'VerticalAlignment', 'top', 'FontSize', 9);
-    xlim(tax.from_ms([-200, config.oneAP.async_window_ms(2) + 100]));   % default view
+    xlim(tax.from_ms([-200, max(config.oneAP.async_window_ms(2), config.oneAP.auc_window_ms(2)) + 100]));   % default view
     ylabel('\DeltaF/F (mean \pm SEM)');
     title('1AP Average Evoked Trace (double-exponential decay fit)');
     legend(legend_entries, 'Location', 'best');
@@ -577,7 +607,7 @@ function fig = plot_oneap_cs_average(groups, config)
     % Coverslip-average dF/F. One row per group: the first tile is the group
     % average OF the coverslip averages (mean +/- SEM across coverslips, n =
     % coverslips - the statistical unit), the rest are one tile per coverslip
-    % (mean +/- SEM over all scorable trials, dashed = successful trials only,
+    % (mean +/- SEM over successful trials, dashed = all scorable trials,
     % grey = each region c#). y is shared across all tiles so groups compare.
     fig = [];
     nG = numel(groups);
@@ -586,7 +616,7 @@ function fig = plot_oneap_cs_average(groups, config)
     stim_frame = config.oneAP.stim_frame;
     frame_dur  = 1000 / config.frame_rate;
     tax        = make_time_axis(config);
-    xwin       = tax.from_ms([-200, config.oneAP.async_window_ms(2) + 100]);
+    xwin       = tax.from_ms([-200, max(config.oneAP.async_window_ms(2), config.oneAP.auc_window_ms(2)) + 100]);
     aw         = tax.from_ms(config.oneAP.auc_window_ms);
     nC = max(nCs) + 1;
 
@@ -599,15 +629,17 @@ function fig = plot_oneap_cs_average(groups, config)
         if nCs(g) == 0, continue; end
         t = tax.from_ms(((1:numel(gd.cs_avg(1).trace)) - stim_frame) * frame_dur);
 
-        % Group tile: each coverslip average (thin) + their mean +/- SEM
+        % Group tile: each coverslip's successful-trial average (thin) + their
+        % mean +/- SEM; dashed = mean of the all-scorable coverslip averages
         ax = nexttile(tl, (g-1)*nC + 1); hold on; axs(end+1) = ax; %#ok<AGROW>
-        C  = vertcat(gd.cs_avg.trace);                 % [coverslips x frames]
+        C  = vertcat(gd.cs_avg.trace_resp);            % [coverslips x frames]
         mu = mean(C, 1, 'omitnan');
         se = std(C, 0, 1, 'omitnan') ./ sqrt(max(sum(isfinite(C), 1), 1));
         xregion(aw(1), aw(2), 'FaceColor', [0.45 0.45 0.50], 'FaceAlpha', 0.10);
         fill([t, fliplr(t)], [mu + se, fliplr(mu - se)], gd.color, ...
             'FaceAlpha', 0.2, 'EdgeColor', 'none');
         plot(t, C', '-', 'Color', [gd.color 0.45], 'LineWidth', 0.7);
+        plot(t, mean(vertcat(gd.cs_avg.trace), 1, 'omitnan'), '--', 'Color', gd.color, 'LineWidth', 1);
         plot(t, mu, '-', 'Color', gd.color, 'LineWidth', 2);
         xline(0, 'k--');
         [pk, ~, a] = avg_trace_metrics(mu, config);
@@ -621,23 +653,32 @@ function fig = plot_oneap_cs_average(groups, config)
             e  = gd.cs_avg(c);
             ax = nexttile(tl, (g-1)*nC + 1 + c); hold on; axs(end+1) = ax; %#ok<AGROW>
             xregion(aw(1), aw(2), 'FaceColor', [0.45 0.45 0.50], 'FaceAlpha', 0.10);
-            fill([t, fliplr(t)], [e.trace + e.sem, fliplr(e.trace - e.sem)], gd.color, ...
+            fill([t, fliplr(t)], [e.trace_resp + e.sem_resp, fliplr(e.trace_resp - e.sem_resp)], gd.color, ...
                 'FaceAlpha', 0.2, 'EdgeColor', 'none');
+            hr = gobjects(0);
             for r = 1:numel(e.regions)
-                plot(t, e.regions(r).trace, '-', 'Color', [0.6 0.6 0.6], 'LineWidth', 0.5);
+                hr = plot(t, e.regions(r).trace, '-', 'Color', [0.6 0.6 0.6], 'LineWidth', 0.5);
             end
-            plot(t, e.trace, '-', 'Color', gd.color, 'LineWidth', 1.5);
-            plot(t, e.trace_resp, '--', 'Color', gd.color * 0.6, 'LineWidth', 1);
+            hs = plot(t, e.trace, '--', 'Color', gd.color, 'LineWidth', 1);
+            hm = plot(t, e.trace_resp, '-', 'Color', gd.color, 'LineWidth', 1.5);
             xline(0, 'k--');
+            if c == 1   % spell out the three line types once per row
+                h = [hm, hs, hr];
+                names = {'coverslip mean, successful trials only', ...
+                    'coverslip mean, all scorable trials', ...
+                    'each region (c#), all scorable trials'};
+                legend(h, names(1:numel(h)), 'Location', 'northeast', 'FontSize', 7, 'Box', 'off');
+            end
             title(sprintf('%s  peak=%.3f AUC=%.2f\n%d scorable ROIs, %d/%d successful trials, %d c', ...
-                e.cs, e.peak, e.auc, e.n_rois, e.n_resp, e.n_units, numel(e.regions)), ...
+                e.cs, e.peak_resp, e.auc_resp, e.n_rois, e.n_resp, e.n_units, numel(e.regions)), ...
                 'FontSize', 8, 'Interpreter', 'none');
             style_cs_tile(ax, tax, xwin, g == nG, config);
         end
     end
-    if numel(axs) >= 2, linkaxes(axs, 'y'); end
-    title(tl, sprintf(['1AP Coverslip average \\DeltaF/F: mean \\pm SEM over all scorable trials ' ...
-        '(successes + failures); dashed = successful trials only; grey = region c#\n' ...
+    share_ylim(axs, config);
+    title(tl, sprintf(['1AP Coverslip average \\DeltaF/F\n' ...
+        'solid = mean \\pm SEM over successful trials only (peak/AUC from this); dashed = all scorable trials (successes + failures); ' ...
+        'grey = each region c# (all trials)\n' ...
         'First column = mean of coverslip averages (n = coverslips); shaded = AUC / peak window ' ...
         '%g-%g ms; x in %s'], config.oneAP.auc_window_ms, tax.unit), ...
         'FontSize', 12, 'FontWeight', 'bold', 'Interpreter', 'tex');
@@ -689,23 +730,78 @@ function af = fit_group_double(gd, config)
     end
 end
 
-function fig = plot_oneap_metric(groups, field, useResponders, ylab, ttl, comparison, pfield)
-    fig = figure('Name', ['OneAP ' ttl], 'Position', [150 120 700 600]);
-    plot_group_box(gca, groups, field, useResponders, ylab, ttl, comparison, pfield);
+function fig = plot_oneap_amplitude(groups, comparison)
+    % Evoked peak amplitude: per-coverslip SuperPlot (the statistic) plus the
+    % distributions behind it (ROIs pooled across coverslips: shape only).
+    % Left: SuperPlot; middle: every successful trial; right: per-ROI potency.
+    fig = figure('Name', 'OneAP Evoked Peak Amplitude', 'Position', [150 120 1700 560]);
+    tl  = tiledlayout(fig, 1, 3, 'TileSpacing', 'compact', 'Padding', 'compact');
+    title(tl, '1AP Evoked Peak Amplitude', 'FontSize', 14, 'FontWeight', 'bold');
+    subtitle(tl, 'left: per-coverslip SuperPlot (statistic)  |  histograms: pooled across coverslips (shape only)', ...
+        'FontSize', 9);
+    cols = vertcat(groups.color);
+    succ = arrayfun(@(gd) gd.peak_amplitude(gd.is_responder), groups, 'UniformOutput', false);
+    pot  = arrayfun(@(gd) gd.roi_potency(gd.roi_active), groups, 'UniformOutput', false);
+
+    plot_group_box(nexttile(tl), groups, 'peak_amplitude', true, 'Evoked peak amplitude (\DeltaF/F)', ...
+        'Per-coverslip means (successful trials)', comparison, 'peak_amplitude');
+
+    ax = nexttile(tl); hold(ax, 'on');
+    grouped_hist(ax, succ, 40, cols, n_labels(groups, succ));
+    xlabel(ax, 'Evoked peak amplitude (\DeltaF/F)'); ylabel(ax, 'Relative fraction of trials');
+    title(ax, 'All successful trials'); legend(ax, 'Location', 'northeast', 'Interpreter', 'none');
+    grid(ax, 'on'); box(ax, 'on');
+
+    ax = nexttile(tl); hold(ax, 'on');
+    grouped_hist(ax, pot, 30, cols, n_labels(groups, pot));
+    xlabel(ax, 'Potency per ROI (\DeltaF/F)'); ylabel(ax, 'Relative fraction of active ROIs');
+    title(ax, 'Per-ROI potency (mean of successes)');
+    legend(ax, 'Location', 'northeast', 'Interpreter', 'none'); grid(ax, 'on'); box(ax, 'on');
+end
+
+function labels = n_labels(groups, vals)
+    % Legend names 'group (n=#finite values)'.
+    labels = cellfun(@(n, x) sprintf('%s (n=%d)', n, sum(isfinite(x))), ...
+        {groups.name}, vals, 'UniformOutput', false);
+end
+
+function plot_metric_panels(fig, groups, metrics, comparison, figTitle)
+    % One column per metric: per-coverslip SuperPlot on top, side-by-side
+    % relative-frequency histogram of the successful-trial values below
+    % (pooled across coverslips: distribution shape only, not the statistic).
+    % metrics: rows of {field, axis label, title}.
+    nM   = size(metrics, 1);
+    cols = vertcat(groups.color);
+    tl   = tiledlayout(fig, 2, nM, 'TileSpacing', 'compact', 'Padding', 'compact');
+    title(tl, figTitle, 'FontSize', 13, 'FontWeight', 'bold');
+    subtitle(tl, 'top: per-coverslip SuperPlot (statistic)  |  bottom: successful trials pooled across coverslips (shape only; x clipped to 0.5-99.5th percentile)', ...
+        'FontSize', 9);
+    for k = 1:nM
+        [f, ylab, ttl] = metrics{k, :};
+        ax = nexttile(tl, k);
+        plot_group_box(ax, groups, f, true, ylab, ttl, comparison, f);
+        ax = nexttile(tl, nM + k); hold(ax, 'on'); axes(ax);
+        v = arrayfun(@(gd) gd.(f)(gd.is_responder), groups, 'UniformOutput', false);
+        allv = [v{:}]; allv = allv(isfinite(allv));
+        if ~isempty(allv)
+            lim = prctile(allv, [0.5 99.5]);   % a few outliers don't set the range
+            if lim(2) <= lim(1), lim = lim(1) + [-0.5 0.5]; end
+            grouped_hist(gca, v, linspace(lim(1), lim(2), 31), cols, n_labels(groups, v));
+            xlim(lim);
+        end
+        xlabel(ylab); ylabel('Relative fraction of trials');
+        title([ttl ' distribution']);
+        legend('Location', 'northeast', 'Interpreter', 'none'); grid on; box on;
+    end
 end
 
 function fig = plot_oneap_kinetics(groups, comparison)
-    fig = figure('Name', 'OneAP Kinetics', 'Position', [200 120 1300 500]);
-    subplot(1,3,1);
-    plot_group_box(gca, groups, 'time_to_peak_ms', true, 'Time to peak (ms)', ...
-        'Time to Peak', comparison, 'time_to_peak_ms');
-    subplot(1,3,2);
-    plot_group_box(gca, groups, 'auc', true, 'AUC (\DeltaF/F\cdotms)', ...
-        'Area Under Curve', comparison, 'auc');
-    subplot(1,3,3);
-    plot_group_box(gca, groups, 'tau_ms', true, '\tau decay (ms)', ...
-        'Decay \tau', comparison, 'tau_ms');
-    sgtitle('1AP Response Kinetics (responders)', 'FontSize', 14, 'FontWeight', 'bold');
+    fig = figure('Name', 'OneAP Kinetics', 'Position', [200 60 1500 850]);
+    plot_metric_panels(fig, groups, { ...
+        'time_to_peak_ms', 'Time to peak (ms)',      'Time to Peak'; ...
+        'auc',             'AUC (\DeltaF/F\cdotms)', 'Area Under Curve'; ...
+        'tau_ms',          '\tau decay (ms)',        'Decay \tau'}, comparison, ...
+        '1AP Response Kinetics (responders)');
 end
 
 function plot_group_box(ax, groups, field, useResponders, ylab, ttl, comparison, pfield)
@@ -739,9 +835,9 @@ function plot_group_box(ax, groups, field, useResponders, ylab, ttl, comparison,
                 'MarkerEdgeColor', 'k', 'LineWidth', 1);
         end
         cs_vals = [cs_vals, cm]; %#ok<AGROW>
-        labels{g} = sprintf('%s (N=%d cs, %d ROIs)', gd.name, numel(cm), numel(v));
+        labels{g} = sprintf('N=%d cs, %d ROIs', numel(cm), numel(v));
     end
-    set(ax, 'XTick', 1:nG, 'XTickLabel', labels);
+    set_group_ticks(ax, {groups.name}, labels);
     xlim([0.5, nG + 0.5]);
     ylabel(ylab); title(ttl); grid on; box on;
     annotate_pvalue(comparison, pfield, cs_vals);
@@ -774,101 +870,179 @@ function fig = plot_oneap_auc_split(groups, comparison)
     % responder-gated and aggregated per coverslip (same units as the total AUC).
     % The asynchronous panel is the magnitude of the slow tail seen in the
     % averaged trace - the quantity the per-ROI mono tau cannot capture.
-    fig = figure('Name', 'OneAP AUC Split', 'Position', [180 110 1300 500]);
-    subplot(1,3,1);
-    plot_group_box(gca, groups, 'auc', true, 'AUC (\DeltaF/F\cdotms)', ...
-        'Total AUC', comparison, 'auc');
-    subplot(1,3,2);
-    plot_group_box(gca, groups, 'auc_sync', true, 'AUC (\DeltaF/F\cdotms)', ...
-        'Synchronous AUC', comparison, 'auc_sync');
-    subplot(1,3,3);
-    plot_group_box(gca, groups, 'auc_async', true, 'AUC (\DeltaF/F\cdotms)', ...
-        'Asynchronous AUC (slow tail)', comparison, 'auc_async');
-    sgtitle('1AP Area Under Curve by release timing (responders)', ...
-        'FontSize', 14, 'FontWeight', 'bold');
+    fig = figure('Name', 'OneAP AUC Split', 'Position', [180 60 1500 850]);
+    plot_metric_panels(fig, groups, { ...
+        'auc',       'AUC (\DeltaF/F\cdotms)', 'Total AUC'; ...
+        'auc_sync',  'AUC (\DeltaF/F\cdotms)', 'Synchronous AUC'; ...
+        'auc_async', 'AUC (\DeltaF/F\cdotms)', 'Asynchronous AUC (slow tail)'}, comparison, ...
+        '1AP Area Under Curve by release timing (responders)');
 end
 
 function fig = plot_oneap_sync_async(groups, config)
-    fig = figure('Name', 'OneAP Sync vs Async', 'Position', [250 100 1200 550]);
+    % Sync / async release events from the shared 2AP detector (onset-binned,
+    % config.twoAP.events). Returns [] when no group has event binning (frames
+    % slower than events.max_frame_ms), as the 2AP sync/async figure does.
+    fig = [];
+    if ~any([groups.events_enabled])
+        fprintf('  1AP sync/async figures skipped: frames slower than %g ms (events.max_frame_ms).\n', ...
+            config.twoAP.events.max_frame_ms);
+        return;
+    end
+    groups = groups([groups.events_enabled]);
+    e   = config.twoAP.events;
+    fig = figure('Name', 'OneAP Sync vs Async', 'Position', [150 100 1700 580]);
+    tl  = tiledlayout(fig, 1, 3, 'TileSpacing', 'compact', 'Padding', 'compact');
+    title(tl, '1AP Synchronous / Asynchronous Release', 'FontSize', 14, 'FontWeight', 'bold');
+    subtitle(tl, sprintf(['release events as in 2AP: onset \\leq %g ms = sync, later = async ' ...
+        '(to %g ms); async spont-subtracted'], e.sync_cutoff_ms, e.async_window_ms), 'FontSize', 9);
     tax = make_time_axis(config);
 
-    % Left: sync/async fraction of events per group
-    subplot(1,2,1); hold on;
+    % Left: group-pooled sync / async share of all events
+    ax = nexttile(tl); hold(ax, 'on');
     nG = numel(groups);
     fracs = zeros(nG, 2);
-    labels = cell(1, nG);
     for g = 1:nG
-        gd = groups(g);
-        s = sum(gd.sync_count);
-        a = sum(gd.async_count);
-        tot = s + a;
-        if tot == 0, tot = 1; end
-        fracs(g, :) = [s, a] / tot;
-        labels{g} = gd.name;
+        [s, a] = event_totals(groups(g));
+        fracs(g, :) = [s, a] / max(s + a, 1);
     end
-    hb = bar(fracs, 'stacked');
+    hb = bar(ax, fracs, 'stacked');
     hb(1).FaceColor = [0.2 0.6 0.2]; hb(2).FaceColor = [0.8 0.5 0.1];
-    set(gca, 'XTick', 1:nG, 'XTickLabel', labels);
-    ylabel('Fraction of events'); ylim([0 1]);
-    legend({'Synchronous', 'Asynchronous'}, 'Location', 'bestoutside');
-    title('Synchronous vs Asynchronous event share'); grid on; box on;
+    set(ax, 'XTick', 1:nG, 'XTickLabel', {groups.name}, 'TickLabelInterpreter', 'none');
+    ylabel(ax, 'Fraction of events'); ylim(ax, [0 1]);
+    legend(ax, {'Synchronous', 'Asynchronous'}, 'Location', 'southoutside', 'Orientation', 'horizontal');
+    title(ax, 'Event share (pooled)'); grid(ax, 'on'); box(ax, 'on');
 
-    % Right: post-stim temporal histogram (PSTH). Time 0 = the refined stim
-    % frame (Stim_Frames_Refined), the same zero every 1AP metric uses.
-    subplot(1,2,2); hold on;
+    % Middle: distribution of the per-trial async share async/(sync+async) over
+    % (ROI, trial) units with >= 1 event (raw counts: a per-trial spont
+    % correction would be mostly noise); legend = group-pooled share.
+    ax = nexttile(tl); hold(ax, 'on');
+    vals = cell(1, nG); labels = cell(1, nG);
     for g = 1:nG
         gd = groups(g);
-        if isempty(gd.temporal_hist_sum), continue; end
-        plot(tax.from_ms(gd.bin_centers_ms), gd.temporal_hist_sum, '-o', 'Color', gd.color, ...
-            'LineWidth', 1.8, 'MarkerFaceColor', gd.color, 'MarkerSize', 4, ...
-            'DisplayName', gd.name);
+        tot = gd.sync_count + gd.async_count;
+        ok  = tot > 0;                                  % NaN (unscored) compares false
+        vals{g} = gd.async_count(ok) ./ tot(ok);
+        [s, a] = event_totals(gd);
+        labels{g} = sprintf('%s (%d trials, pooled %.0f%% async)', gd.name, numel(vals{g}), ...
+            100 * a / max(s + a, 1));
+    end
+    grouped_hist(ax, vals, 0:0.1:1, vertcat(groups.color), labels);
+    xlim(ax, [0 1]); xlabel(ax, 'Asynchronous share of events per trial (raw)');
+    ylabel(ax, 'Fraction of trials with events');
+    legend(ax, 'Location', 'north', 'Interpreter', 'none');
+    title(ax, 'Per-trial asynchronous share'); grid(ax, 'on'); box(ax, 'on');
+
+    % Right: event ONSET latency histogram. Time 0 = the refined stim frame
+    % (Stim_Frames_Refined), the same zero every 1AP metric uses.
+    % Side-by-side bars per bin, each group normalised to its own event total
+    % (relative frequency) so groups with different ROI counts compare directly.
+    ax = nexttile(tl); hold(ax, 'on'); axes(ax);
+    has = arrayfun(@(g) ~isempty(g.temporal_hist_sum), groups);
+    if any(has)
+        ctr = groups(find(has, 1)).bin_centers_ms(:);
+        Y = zeros(numel(ctr), nG);
+        for g = find(has)
+            h = groups(g).temporal_hist_sum(:);
+            Y(:, g) = h / max(sum(h), 1);
+        end
+        hb = bar(tax.from_ms(ctr), Y(:, has), 1, 'grouped', 'EdgeColor', 'none');
+        gi = find(has);
+        for k = 1:numel(hb)
+            hb(k).FaceColor   = groups(gi(k)).color;
+            hb(k).DisplayName = groups(gi(k)).name;
+        end
     end
     yl = ylim;
-    sync_hi = tax.from_ms(config.oneAP.sync_window_ms(2));
-    patch([0 sync_hi sync_hi 0], [0 0 yl(2) yl(2)], [0.2 0.6 0.2], ...
-        'FaceAlpha', 0.12, 'EdgeColor', 'none', 'HandleVisibility', 'off');
-    ylabel(sprintf('Event count (%d ms bins)', config.oneAP.bin_size_ms));
-    title('Post-stimulus event time histogram (0 = refined stim frame)');
+    % Sync region = onsets up to the cutoff (frame-rounded), to the bin's half edge
+    sync_hi = tax.from_ms(round(e.sync_cutoff_ms / config.frame_dur_ms) * config.frame_dur_ms ...
+        + config.oneAP.bin_size_ms / 2);
+    hp = patch([tax.from_ms(-config.oneAP.bin_size_ms / 2) sync_hi sync_hi tax.from_ms(-config.oneAP.bin_size_ms / 2)], ...
+        [0 0 yl(2) yl(2)], [0.2 0.6 0.2], 'FaceAlpha', 0.12, 'EdgeColor', 'none', 'HandleVisibility', 'off');
+    uistack(hp, 'bottom');
+    ylabel(sprintf('Relative frequency (%d ms bins)', config.oneAP.bin_size_ms));
+    title('Event onset latency (green = sync)');
     legend('Location', 'best'); grid on; box on;
-    format_time_axis(gca, tax, 'Time from stimulus');
-    sgtitle('1AP Synchronous / Asynchronous Release', 'FontSize', 14, 'FontWeight', 'bold');
+    format_time_axis(gca, tax, 'Event onset after stimulus');
 end
 
 function fig = plot_oneap_responders(groups, comparison)
-    fig = figure('Name', 'OneAP Responder Fraction', 'Position', [300 150 700 550]);
-    hold on;
+    fig = figure('Name', 'OneAP Responder Fraction', 'Position', [300 150 1300 580]);
+    tl  = tiledlayout(fig, 1, 2, 'TileSpacing', 'compact', 'Padding', 'compact');
+    title(tl, '1AP trial success rate', 'FontSize', 13, 'FontWeight', 'bold');
+    subtitle(tl, 'ROI x trial units with a validated evoked response', 'FontSize', 9);
     nG = numel(groups);
-    fr = zeros(1, nG); labels = cell(1, nG);
+    vals = cell(1, nG); labels = cell(1, nG); fr = zeros(1, nG);
     for g = 1:nG
         gd = groups(g);
+        vals{g} = 100 * coverslip_resp_frac(gd);
         fr(g) = 100 * gd.n_responders / max(gd.total_rois, 1);
-        labels{g} = sprintf('%s\n(%d/%d)', gd.name, gd.n_responders, gd.total_rois);
+        labels{g} = sprintf('%s (N=%d cs; pooled %d/%d = %.0f%%)', gd.name, numel(vals{g}), ...
+            gd.n_responders, gd.total_rois, fr(g));
     end
-    hb = bar(fr, 0.6, 'FaceColor', 'flat');
+
+    % Left: group-pooled rate (bar) + per-coverslip rates (dots)
+    draw_fraction_bars(nexttile(tl), groups, fr, vals, 'Successful trials (%)', ...
+        'Pooled bar, coverslip dots', comparison, 'responder_fraction_p');
+
+    % Right: histogram of per-coverslip success rates (the statistical units)
+    ax = nexttile(tl); hold(ax, 'on');
+    grouped_hist(ax, vals, 0:10:100, vertcat(groups.color), labels);
+    xlim(ax, [0 100]); xlabel(ax, 'Successful trials per coverslip (%)');
+    ylabel(ax, 'Fraction of coverslips');
+    legend(ax, 'Location', 'northeast', 'Interpreter', 'none');
+    grid(ax, 'on'); box(ax, 'on');
+    title(ax, 'Distribution of per-coverslip success rates');
+end
+
+function draw_fraction_bars(ax, groups, pooled, cs_vals, ylab, ttl, comparison, pfield)
+    % Bar = group-pooled percentage; dots = per-coverslip percentages (the
+    % statistical units); bracket = Mann-Whitney p between groups 1 and 2.
+    axes(ax); hold(ax, 'on');
+    nG = numel(groups);
+    hb = bar(pooled, 0.6, 'FaceColor', 'flat');
     for g = 1:nG, hb.CData(g, :) = groups(g).color; end
-
-    % Overlay per-coverslip responder fractions (the statistical units)
+    labels = cell(1, nG);
     for g = 1:nG
-        cf = 100 * coverslip_resp_frac(groups(g));
-        if isempty(cf), continue; end
-        cjit = (rand(1, numel(cf)) - 0.5) * 0.25;
-        scatter(g + cjit, cf, 45, groups(g).color, 'filled', ...
-            'MarkerEdgeColor', 'k', 'LineWidth', 1);
-        labels{g} = sprintf('%s\n(%d/%d trials, N=%d cs)', groups(g).name, ...
-            groups(g).n_responders, groups(g).total_rois, numel(cf));
+        cf = cs_vals{g};
+        if ~isempty(cf)
+            scatter(g + (rand(1, numel(cf)) - 0.5) * 0.25, cf, 45, groups(g).color, ...
+                'filled', 'MarkerEdgeColor', 'k', 'LineWidth', 1);
+        end
+        labels{g} = sprintf('pooled %.0f%%, N=%d cs', pooled(g), numel(cf));
     end
-    set(gca, 'XTick', 1:nG, 'XTickLabel', labels);
-    ylabel('Successful trials (%)');
-    title('Trial success rate (ROI x trial units with a validated evoked response)');
-    grid on; box on; ylim([0 100]);
-
-    if ~isempty(comparison) && isfield(comparison, 'responder_fraction_p') ...
-            && ~isnan(comparison.responder_fraction_p) && nG >= 2
-        p = comparison.responder_fraction_p;
-        y = max(fr) + 6;
+    set_group_ticks(ax, {groups.name}, labels);
+    xlim([0.4, nG + 0.6]);
+    ylabel(ylab); title(ttl); grid on; box on;
+    top = max([pooled, cs_vals{:}, 1]);
+    ylim([0, top * 1.25]);   % room for the p-value bracket above 100%
+    pt = pvalue_text(comparison, pfield, nG);
+    if ~isempty(pt)
+        y = top * 1.1;
         line([1 2], [y y], 'Color', 'k');
-        if p < 0.001, ptxt = 'p < 0.001 ***'; else, ptxt = sprintf('p = %.3f', p); end
-        text(1.5, y + 1, ptxt, 'HorizontalAlignment', 'center', 'FontWeight', 'bold');
+        text(1.5, y, pt, 'HorizontalAlignment', 'center', 'VerticalAlignment', 'bottom', ...
+            'FontWeight', 'bold');
+    end
+end
+
+function set_group_ticks(ax, names, details)
+    % x ticks = group names only; the per-group detail (n, pooled value) goes in
+    % the x label, one line per group. Axes layout reserves room for a
+    % multi-line x label, but not for multi-line tick labels (those overlapped
+    % the panel below and were clipped).
+    set(ax, 'XTick', 1:numel(names), 'XTickLabel', names, 'TickLabelInterpreter', 'none', ...
+        'XTickLabelRotation', 0);
+    xlabel(ax, cellfun(@(n, d) sprintf('%s: %s', n, d), names, details, 'UniformOutput', false), ...
+        'Interpreter', 'none', 'FontSize', 8);
+end
+
+function t = pvalue_text(comparison, pfield, nG)
+    % One-line Mann-Whitney p-value for a figure title ('' when not available).
+    t = '';
+    if nG >= 2 && ~isempty(comparison) && isfield(comparison, pfield) ...
+            && ~isnan(comparison.(pfield))
+        p = comparison.(pfield);
+        if p < 0.001, t = 'p < 0.001 *** (per coverslip)';
+        else, t = sprintf('p = %.3f (per coverslip)', p); end
     end
 end
 
@@ -876,36 +1050,33 @@ function fig = plot_oneap_release_prob(groups, comparison)
     % Per-ROI release statistics across trials, over ACTIVE ROIs (>= 1 success):
     %   (1) distribution of P(response) = successes / valid trials
     %   (2) P(response), (3) potency, (4) efficacy - per-coverslip SuperPlots
-    fig = figure('Name', 'OneAP Release Probability', 'Position', [140 90 1600 800]);
+    fig = figure('Name', 'OneAP Release Probability', 'Position', [140 60 1600 860]);
+    tl  = tiledlayout(fig, 2, 2, 'TileSpacing', 'compact', 'Padding', 'compact');
+    title(tl, '1AP release reliability across trials', 'FontSize', 14, 'FontWeight', 'bold');
     nG = numel(groups);
 
-    subplot(2,2,1); hold on;
-    labels = cell(1, nG);
+    ax = nexttile(tl); hold(ax, 'on'); axes(ax);
+    labels = cell(1, nG); vals = cell(1, nG);
     maxT = max([1, arrayfun(@(g) max([g.roi_n_valid, 1]), groups)]);
     for g = 1:nG
         gd = groups(g);
         v = gd.roi_p_response(gd.roi_active & isfinite(gd.roi_p_response));
         labels{g} = sprintf('%s (%d active / %d ROIs)', gd.name, numel(v), gd.n_rois);
-        if isempty(v), continue; end
-        histogram(v, 'BinEdges', ((0:maxT+1) - 0.5) / maxT, ...   % centred on k/maxT
-            'Normalization', 'probability', 'DisplayStyle', 'stairs', ...
-            'EdgeColor', gd.color, 'LineWidth', 2);
+        vals{g} = v;
     end
+    grouped_hist(gca, vals, ((0:maxT+1) - 0.5) / maxT, ...   % centred on k/maxT
+        vertcat(groups.color), labels);
     xlim([0 1.05]); xlabel('P(response) per ROI'); ylabel('Fraction of active ROIs');
     title('Per-ROI response probability across trials');
-    legend(labels, 'Location', 'northwest', 'Interpreter', 'none'); grid on; box on;
+    legend('Location', 'northwest', 'Interpreter', 'none'); grid on; box on;
 
-    subplot(2,2,2);
-    plot_roi_box(gca, groups, 'roi_p_response', 'P(response)', ...
+    plot_roi_box(nexttile(tl), groups, 'roi_p_response', 'P(response)', ...
         'Response probability (active ROIs)', comparison);
     ylim([0 1.1]);
-    subplot(2,2,3);
-    plot_roi_box(gca, groups, 'roi_potency', '\DeltaF/F', ...
+    plot_roi_box(nexttile(tl), groups, 'roi_potency', '\DeltaF/F', ...
         'Potency (mean amplitude of successes)', comparison);
-    subplot(2,2,4);
-    plot_roi_box(gca, groups, 'roi_efficacy', '\DeltaF/F', ...
+    plot_roi_box(nexttile(tl), groups, 'roi_efficacy', '\DeltaF/F', ...
         'Efficacy (mean amplitude, failures = 0)', comparison);
-    sgtitle('1AP release reliability across trials', 'FontSize', 14, 'FontWeight', 'bold');
 end
 
 function plot_roi_box(ax, groups, field, ylab, ttl, comparison)
@@ -929,108 +1100,88 @@ function plot_roi_box(ax, groups, field, ylab, ttl, comparison)
                 'filled', 'MarkerEdgeColor', 'k', 'LineWidth', 1);
         end
         cs_vals = [cs_vals, cm]; %#ok<AGROW>
-        labels{g} = sprintf('%s (N=%d cs, %d ROIs)', gd.name, numel(cm), numel(v));
+        labels{g} = sprintf('N=%d cs, %d ROIs', numel(cm), numel(v));
     end
-    set(ax, 'XTick', 1:nG, 'XTickLabel', labels, 'TickLabelInterpreter', 'none');
+    set_group_ticks(ax, {groups.name}, labels);
     xlim([0.5, nG + 0.5]);
     ylabel(ylab); title(ttl); grid on; box on;
     annotate_pvalue(comparison, field, cs_vals);
 end
 
 function fig = plot_oneap_async_fraction(groups, comparison, config)
-    % Per-coverslip ASYNCHRONOUS-release fraction: async/(sync+async) events.
-    % Bars = group-pooled fraction (matches the PSTH); dots = per-coverslip
-    % fractions (the statistical units); p-value = Mann-Whitney U across
-    % coverslips. This is the per-replicate test of the slow tail that is obvious
-    % in the averaged evoked trace but is NOT captured by the per-ROI mono tau
-    % (truncated at the lower threshold) or the peak-dominated AUC.
-    fig = figure('Name', 'OneAP Asynchronous Fraction', 'Position', [320 160 700 550]);
-    hold on;
+    % Per-coverslip ASYNCHRONOUS-release fraction: async/(sync+async) release
+    % events (shared 2AP detector, async spont-subtracted - event_totals).
+    % Left: group-pooled fraction (bar, matches the onset histogram) + per-
+    % coverslip fractions (dots, the statistical units); p-value = Mann-Whitney
+    % U across coverslips. Right: histogram of the per-coverslip fractions.
+    % Returns [] when event binning did not run (slow frames).
+    fig = [];
+    if ~any([groups.events_enabled]), return; end
+    e   = config.twoAP.events;
+    fig = figure('Name', 'OneAP Asynchronous Fraction', 'Position', [320 160 1300 580]);
+    tl  = tiledlayout(fig, 1, 2, 'TileSpacing', 'compact', 'Padding', 'compact');
+    title(tl, '1AP asynchronous release fraction', 'FontSize', 13, 'FontWeight', 'bold');
+    subtitle(tl, sprintf(['async / all release events; onset > %g ms (to %g ms) = async, ' ...
+        'as in 2AP; async spont-subtracted'], e.sync_cutoff_ms, e.async_window_ms), 'FontSize', 9);
     nG = numel(groups);
-    fr = zeros(1, nG); labels = cell(1, nG); cf_all = [];
+    vals = cell(1, nG); labels = cell(1, nG); fr = zeros(1, nG);
     for g = 1:nG
         gd = groups(g);
-        s = sum(gd.sync_count); a = sum(gd.async_count);
-        tot = s + a; if tot == 0, tot = 1; end
-        fr(g) = 100 * a / tot;
-        labels{g} = gd.name;
+        [s, a] = event_totals(gd);
+        vals{g} = 100 * coverslip_async_frac(gd);
+        fr(g) = 100 * a / max(s + a, 1);
+        labels{g} = sprintf('%s (N=%d cs; pooled %.0f%%)', gd.name, numel(vals{g}), fr(g));
     end
-    hb = bar(fr, 0.6, 'FaceColor', 'flat');
-    for g = 1:nG, hb.CData(g, :) = groups(g).color; end
 
-    % Overlay per-coverslip async fractions (the statistical units)
-    for g = 1:nG
-        cf = 100 * coverslip_async_frac(groups(g));
-        cf_all = [cf_all, cf]; %#ok<AGROW>
-        if isempty(cf), continue; end
-        cjit = (rand(1, numel(cf)) - 0.5) * 0.25;
-        scatter(g + cjit, cf, 45, groups(g).color, 'filled', ...
-            'MarkerEdgeColor', 'k', 'LineWidth', 1);
-        labels{g} = sprintf('%s\n(N=%d cs)', groups(g).name, numel(cf));
-    end
-    set(gca, 'XTick', 1:nG, 'XTickLabel', labels);
-    ylabel('Asynchronous fraction (%)');
-    title(sprintf('Asynchronous release fraction (events >%g ms / all post-stim events)', ...
-        config.oneAP.sync_window_ms(2)));
-    grid on; box on;
-    top = max([fr, cf_all, 1]);
-    ylim([0, min(100, top * 1.25)]);
+    draw_fraction_bars(nexttile(tl), groups, fr, vals, 'Asynchronous fraction (%)', ...
+        'Pooled bar, coverslip dots', comparison, 'async_fraction_p');
 
-    if ~isempty(comparison) && isfield(comparison, 'async_fraction_p') ...
-            && ~isnan(comparison.async_fraction_p) && nG >= 2
-        p = comparison.async_fraction_p;
-        y = top * 1.12;
-        line([1 2], [y y], 'Color', 'k');
-        if p < 0.001, ptxt = 'p < 0.001 ***'; else, ptxt = sprintf('p = %.3f', p); end
-        text(1.5, y + top*0.02, ptxt, 'HorizontalAlignment', 'center', 'FontWeight', 'bold');
-    end
+    ax = nexttile(tl); hold(ax, 'on');
+    grouped_hist(ax, vals, 0:5:100, vertcat(groups.color), labels);
+    top = max([vals{:}, 10]);
+    xlim(ax, [0, min(100, 5 * ceil(top / 5) + 5)]);
+    xlabel(ax, 'Asynchronous fraction per coverslip (%)');
+    ylabel(ax, 'Fraction of coverslips');
+    legend(ax, 'Location', 'northeast', 'Interpreter', 'none');
+    grid(ax, 'on'); box(ax, 'on');
+    title(ax, 'Distribution of per-coverslip async fractions');
 end
 
 function fig = plot_oneap_qc(groups, config)
     fig = figure('Name', 'OneAP QC', 'Position', [120 80 1300 850]);
     tax = make_time_axis(config);
 
+    % Distributions are side-by-side relative-frequency histograms.
+    cols  = vertcat(groups.color);
+    names = {groups.name};
+
     % (1) pre-stim noise SD distribution
     subplot(2,2,1); hold on;
-    for g = 1:numel(groups)
-        gd = groups(g);
-        v = gd.prestim_sd(isfinite(gd.prestim_sd));
-        if isempty(v), continue; end
-        histogram(v, 30, 'FaceColor', gd.color, 'FaceAlpha', 0.5, ...
-            'EdgeColor', 'none', 'DisplayName', gd.name);
-    end
-    xlabel('Pre-stim noise SD (\DeltaF/F)'); ylabel('ROI count');
+    grouped_hist(gca, {groups.prestim_sd}, 30, cols, names);
+    xlabel('Pre-stim noise SD (\DeltaF/F)'); ylabel('Fraction of trials');
     title('Pre-stimulus noise (threshold basis)'); legend('Location','best'); grid on; box on;
 
     % (2) peak-time histogram (verify peak ~ expected), relative to stim
     subplot(2,2,2); hold on;
     binw = tax.from_frames_rel(1);   % one-frame bins in display units
-    for g = 1:numel(groups)
-        gd = groups(g);
-        v = gd.peak_frame(gd.is_responder);
-        v = v(isfinite(v));
-        if isempty(v), continue; end
-        v = tax.from_frames_rel(v - config.oneAP.stim_frame);   % time from stim
-        histogram(v, 'BinWidth', binw, 'FaceColor', gd.color, ...
-            'FaceAlpha', 0.5, 'EdgeColor', 'none', 'DisplayName', gd.name);
+    vals = arrayfun(@(gd) tax.from_frames_rel(gd.peak_frame(gd.is_responder) ...
+        - config.oneAP.stim_frame), groups, 'UniformOutput', false);   % time from stim
+    allv = [vals{:}]; allv = allv(isfinite(allv));
+    if ~isempty(allv)
+        edges = ((floor(min(allv) / binw) - 0.5) : (ceil(max(allv) / binw) + 0.5)) * binw;
+        grouped_hist(gca, vals, edges, cols, names);
     end
     yl = ylim;
     plot([0 0], yl, 'k--', 'HandleVisibility', 'off');
     text(0, yl(2), ' stim', 'VerticalAlignment', 'top', 'FontSize', 8);
-    ylabel('Responder count');
+    ylabel('Fraction of responders');
     title('Evoked peak time (responders)'); legend('Location','best'); grid on; box on;
     format_time_axis(gca, tax, 'Peak time from stimulus');
 
     % (3) tau fit R^2 distribution
     subplot(2,2,3); hold on;
-    for g = 1:numel(groups)
-        gd = groups(g);
-        v = gd.tau_r2(isfinite(gd.tau_r2));
-        if isempty(v), continue; end
-        histogram(v, 0:0.05:1, 'FaceColor', gd.color, 'FaceAlpha', 0.5, ...
-            'EdgeColor', 'none', 'DisplayName', gd.name);
-    end
-    xlabel('Decay fit R^2'); ylabel('ROI count');
+    grouped_hist(gca, {groups.tau_r2}, 0:0.05:1, cols, names);
+    xlabel('Decay fit R^2'); ylabel('Fraction of fits');
     title('\tau fit quality'); legend('Location','best'); grid on; box on;
 
     % (4) tau vs amplitude scatter (responders)
@@ -1123,7 +1274,7 @@ function figs = plot_oneap_montage(groups, config)
                 setappdata(gca, 'ymin', config.visualization.ymin_montage);   % see apply_ymin_zero
             end
             title(tl, sprintf(['1AP ROI montage: %s%s (responders first; drag to scroll x, whole trace plotted; ' ...
-                'blue=sync peak, red=async peak, magenta=\\tau fit; x in %s)'], gd.name, ptxt, tax.unit), ...
+                'events at peak: blue=sync onset, red=async onset, magenta=\\tau fit; x in %s)'], gd.name, ptxt, tax.unit), ...
                 'FontSize', 13, 'FontWeight', 'bold', 'Interpreter', 'tex');
         end
     end
@@ -1204,7 +1355,7 @@ function figs = plot_oneap_marginal(groups, config)
             end
             title(tl, sprintf(['1AP marginal responders: %s%s (weakest evoked calls, ' ...
                 'low SNR first; drag to scroll x; green=%g\\sigma, cyan=%g\\sigma, ' ...
-                'blue=sync peak, red=async peak, magenta=\\tau fit; x in %s)'], gd.name, ptxt, ...
+                'events at peak: blue=sync onset, red=async onset, magenta=\\tau fit; x in %s)'], gd.name, ptxt, ...
                 config.oneAP.upper_threshold_sigma, config.oneAP.lower_threshold_sigma, tax.unit), ...
                 'FontSize', 12, 'FontWeight', 'bold', 'Interpreter', 'tex');
         end
@@ -1226,8 +1377,22 @@ function s = page_text(pg, nP)
 end
 
 function s = unit_label(gd, u)
-    % "F<file> ROI<n> T<trial>" for a (ROI, trial) unit column of the group.
-    s = sprintf('F%d ROI%d T%d', gd.file_of_roi(u), gd.unit_roi(u), gd.unit_trial(u));
+    % "<Cs#-c#> ROI<n> T<trial>" for a (ROI, trial) unit column of the group:
+    % recording (see file_ids), ROI = data column in that recording's CSV,
+    % T = k-th stim of the recording (Recordings.csv order). Same string as the
+    % unit_id column of the metrics table, so montage -> Excel -> raw traces.
+    s = sprintf('%s ROI%d T%d', gd.file_ids{gd.file_of_roi(u)}, gd.unit_roi(u), gd.unit_trial(u));
+end
+
+function ids = file_ids(filenames)
+    % recording_id per file (e.g. 'Cs1-c6-02'); the file stem instead when two
+    % files in the group would share an ID.
+    ids = cellfun(@recording_id, filenames, 'UniformOutput', false);
+    [~, ~, j] = unique(ids);
+    dup = accumarray(j(:), 1) > 1;
+    for k = find(dup(j(:)))'
+        [~, ids{k}] = fileparts(filenames{k});
+    end
 end
 
 function plot_tau_fit(gd, roi, stim_frame, frame_dur, nFrames, tax)
@@ -1249,13 +1414,21 @@ function plot_tau_fit(gd, roi, stim_frame, frame_dur, nFrames, tax)
 end
 
 function plot_peak_markers(gd, roi, stim_frame, frame_dur, f0, f1, sync_win, async_win, tax)
-    % Overlay every counted peak on a per-ROI trace:
-    %   blue filled circle  = synchronous peak (peak time in sync_win)
-    %   red  filled circle  = asynchronous peak (peak time in async_win)
-    % Peak times (ms from stim) come straight from the analyzer; the y value is
-    % read back from the aligned dF/F trace at the corresponding frame.
-    if roi > numel(gd.event_peak_times_ms), return; end
-    times = gd.event_peak_times_ms{roi};
+    % Overlay every release event on a per-ROI trace, at its PEAK, coloured by
+    % its ONSET bin (the shared 2AP detector, as counted in sync/async_count):
+    %   blue filled circle  = synchronous event (onset <= events.sync_cutoff_ms)
+    %   red  filled circle  = asynchronous event
+    % Without event binning (slow frames) the responder peaks are shown in
+    % black instead. The y value is read back from the aligned dF/F trace.
+    % (sync_win / async_win are unused; kept so the callers stay unchanged.)
+    if gd.events_enabled && roi <= numel(gd.release_events)
+        ev = gd.release_events(roi);
+        times = ev.lat_ms; issync = ev.is_sync;
+    elseif roi <= numel(gd.event_peak_times_ms)
+        times = gd.event_peak_times_ms{roi}; issync = [];
+    else
+        return;
+    end
     for i = 1:numel(times)
         tt = times(i);
         fr = stim_frame + round(tt / frame_dur);
@@ -1263,14 +1436,8 @@ function plot_peak_markers(gd, roi, stim_frame, frame_dur, f0, f1, sync_win, asy
         yv = gd.dfof_all(fr, roi);
         if ~isfinite(yv), continue; end
         xx = tax.from_ms(tt);   % display units from stim
-        % Classify on frame offsets, as oneap_analyzer does (no ms edge cut).
-        k = fr - stim_frame;
-        sw = round(sync_win / frame_dur); aw = round(async_win / frame_dur);
-        if k >= sw(1) && k <= sw(2)
-            plot(xx, yv, 'o', 'MarkerEdgeColor', 'b', 'MarkerFaceColor', 'b', 'MarkerSize', 5);
-        elseif k > aw(1) && k <= aw(2)
-            plot(xx, yv, 'o', 'MarkerEdgeColor', 'r', 'MarkerFaceColor', 'r', 'MarkerSize', 5);
-        end
+        if isempty(issync), c = 'k'; elseif issync(i), c = 'b'; else, c = 'r'; end
+        plot(xx, yv, 'o', 'MarkerEdgeColor', c, 'MarkerFaceColor', c, 'MarkerSize', 5);
     end
 end
 
@@ -1280,9 +1447,9 @@ end
 function T = build_metrics_table(groups)
     % One row per (ROI, trial) unit. step1_flags = that trial's Step1_Flags.
     genotype = {}; drug = {}; filename = {}; coverslip = {}; roi = []; trial = [];
-    flags = {}; responder = [];
+    flags = {}; responder = []; unit_id = {};
     peak_amp = []; ttp = []; auc = []; auc_s = []; auc_a = []; tau = []; tau_r2 = [];
-    sync_c = []; async_c = []; tot_ev = []; pre_sd = [];
+    sync_c = []; async_c = []; spont_c = []; tot_ev = []; pre_sd = [];
 
     for g = 1:numel(groups)
         gd = groups(g);
@@ -1298,6 +1465,7 @@ function T = build_metrics_table(groups)
             else
                 filename{end+1,1} = ''; %#ok<AGROW>
             end
+            unit_id{end+1,1} = unit_label(gd, j); %#ok<AGROW>
             if j <= numel(gd.coverslip_of_roi)
                 coverslip{end+1,1} = gd.coverslip_of_roi{j}; %#ok<AGROW>
             else
@@ -1315,15 +1483,16 @@ function T = build_metrics_table(groups)
         tau_r2    = [tau_r2;    gd.tau_r2(:)];             %#ok<AGROW>
         sync_c    = [sync_c;    gd.sync_count(:)];         %#ok<AGROW>
         async_c   = [async_c;   gd.async_count(:)];        %#ok<AGROW>
+        spont_c   = [spont_c;   gd.n_spont(:)];            %#ok<AGROW>
         tot_ev    = [tot_ev;    gd.total_events(:)];       %#ok<AGROW>
         pre_sd    = [pre_sd;    gd.prestim_sd(:)];         %#ok<AGROW>
     end
 
-    T = table(genotype, drug, filename, coverslip, roi, trial, logical(responder), peak_amp, ttp, auc, ...
-        auc_s, auc_a, tau, tau_r2, sync_c, async_c, tot_ev, pre_sd, flags, ...
-        'VariableNames', {'genotype', 'drug', 'filename', 'coverslip', 'roi', 'trial', 'is_responder', ...
+    T = table(unit_id, genotype, drug, filename, coverslip, roi, trial, logical(responder), peak_amp, ttp, auc, ...
+        auc_s, auc_a, tau, tau_r2, sync_c, async_c, spont_c, tot_ev, pre_sd, flags, ...
+        'VariableNames', {'unit_id', 'genotype', 'drug', 'filename', 'coverslip', 'roi', 'trial', 'is_responder', ...
         'peak_amplitude', 'time_to_peak_ms', 'auc', 'auc_sync', 'auc_async', 'tau_ms', 'tau_r2', ...
-        'sync_count', 'async_count', 'total_events', 'prestim_sd', 'step1_flags'});
+        'sync_count', 'async_count', 'spont_count', 'total_events', 'prestim_sd', 'step1_flags'});
 end
 
 function T = build_roi_table(groups)
@@ -1332,11 +1501,13 @@ function T = build_roi_table(groups)
     for g = 1:numel(groups)
         gd = groups(g);
         n = gd.n_rois;
-        parts{g} = table(repmat({gd.genotype}, n, 1), repmat({gd.drug}, n, 1), ...
+        roi_id = arrayfun(@(f, r) sprintf('%s ROI%d', gd.file_ids{f}, r), ...
+            gd.roi_file(:), gd.roi_index(:), 'UniformOutput', false);
+        parts{g} = table(roi_id, repmat({gd.genotype}, n, 1), repmat({gd.drug}, n, 1), ...
             gd.filenames(gd.roi_file)', gd.roi_coverslip(:), gd.roi_index(:), ...
             gd.roi_n_valid(:), gd.roi_n_success(:), gd.roi_p_response(:), ...
             gd.roi_potency(:), gd.roi_efficacy(:), ...
-            'VariableNames', {'genotype', 'drug', 'filename', 'coverslip', 'roi', ...
+            'VariableNames', {'roi_id', 'genotype', 'drug', 'filename', 'coverslip', 'roi', ...
             'n_valid_trials', 'n_success', 'p_response', 'potency', 'efficacy'});
     end
     T = vertcat(parts{:});
@@ -1346,7 +1517,8 @@ function T = build_coverslip_table(groups)
     % One row per coverslip: the per-coverslip values the statistics compare
     % (same definitions as coverslip_means / coverslip_means_roi /
     % coverslip_resp_frac / coverslip_async_frac), plus peak / time-to-peak /
-    % AUC of the coverslip's selection-free average trace (gd.cs_avg).
+    % AUC of the coverslip's average over ALL scorable trials, failures included
+    % (gd.cs_avg.trace; the allscorable_* columns).
     trialF = {'peak_amplitude', 'time_to_peak_ms', 'auc', 'auc_sync', 'auc_async', 'tau_ms'};
     roiF   = {'roi_p_response', 'roi_potency', 'roi_efficacy'};
     rows = {};
@@ -1357,7 +1529,7 @@ function T = build_coverslip_table(groups)
             mu = strcmp(gd.coverslip_of_roi, uniq{i});     % (ROI, trial) units
             mr = strcmp(gd.roi_coverslip, uniq{i});        % physical ROIs
             act = mr & gd.roi_active;
-            s = gd.sync_count(mu); a = gd.async_count(mu);
+            [s, a] = event_totals(gd, mu);   % async spont-subtracted (NaN at slow frames)
             row = {gd.genotype, gd.drug, uniq{i}, numel(unique(gd.region_of_roi(mu))), ...
                 nnz(mr), nnz(act), nnz(mu), nnz(mu & gd.is_responder), mean(gd.is_responder(mu))};
             for f = 1:numel(trialF)
@@ -1368,7 +1540,7 @@ function T = build_coverslip_table(groups)
                 v = gd.(roiF{f})(act);
                 row{end+1} = safemean(v(isfinite(v))); %#ok<AGROW>
             end
-            if sum(s) + sum(a) > 0, row{end+1} = sum(a) / (sum(s) + sum(a)); %#ok<AGROW>
+            if s + a > 0, row{end+1} = a / (s + a); %#ok<AGROW>
             else, row{end+1} = NaN; end %#ok<AGROW>
             k = find(strcmp({gd.cs_avg.cs}, uniq{i}), 1);
             if isempty(k), row = [row, {NaN, NaN, NaN}]; %#ok<AGROW>
@@ -1380,7 +1552,7 @@ function T = build_coverslip_table(groups)
     names = [{'genotype', 'drug', 'coverslip', 'n_regions', 'n_rois', 'n_active_rois', ...
         'n_trials', 'n_success', 'success_rate'}, trialF, ...
         {'p_response', 'potency', 'efficacy', 'async_fraction', ...
-        'avg_trace_peak', 'avg_trace_ttp_ms', 'avg_trace_auc'}];
+        'allscorable_peak', 'allscorable_ttp_ms', 'allscorable_auc'}];
     if isempty(rows)
         T = cell2table(cell(0, numel(names)), 'VariableNames', names);
     else

@@ -217,9 +217,10 @@ function fig = plot_hfs_traces(groups, config)
     train_ms = p.n_pulses * p.isi_ms;
     xl = {[-p.epoch_pre_ms / 2, train_ms + p.post_train_ms], [-50 300], [train_ms - 300, train_ms + 250]};
     rowname = {'whole train', 'train start', 'train end'};
+    axs = gobjects(1, 0);
     for r = 1:3
         for d = 1:nD
-            ax = nexttile(tl, (r - 1) * nD + d); hold(ax, 'on');
+            ax = nexttile(tl, (r - 1) * nD + d); hold(ax, 'on'); axs(end+1) = ax; %#ok<AGROW>
             setappdata(ax, 'ymin', config.visualization.ymin_mean_trace);
             gsel = find(strcmp({groups.drug}, drugs{d}));
             for g = gsel
@@ -244,6 +245,7 @@ function fig = plot_hfs_traces(groups, config)
             if r == 1, title(ax, drugs{d}, 'Interpreter', 'none'); legend(ax, 'Location', 'northeast'); end
         end
     end
+    share_ylim(axs, config);   % one y-scale for all panels (largest trace)
     title(tl, {sprintf('HFS %g AP @ %g Hz: coverslip grand-average dF/F (all QC ROIs, no gating)', ...
         p.n_pulses, p.train_hz), 'Thick = group mean, thin = coverslips; dotted = pulses'}, ...
         'FontWeight', 'bold');
@@ -330,10 +332,11 @@ function fig = plot_hfs_file_traces(frs, groups, config)
     nF = numel(frs); nc = min(nF, 2); nr = ceil(nF / nc);
     fig = figure('Name', 'HFS file traces', 'Position', [120 40 1500 max(300, 200*nr)], 'Color', 'w');
     tl = tiledlayout(fig, nr, nc, 'TileSpacing', 'compact', 'Padding', 'compact');
+    axs = gobjects(1, 0);
     for i = 1:nF
         fr = frs{i};
         g = find(strcmp({groups.genotype}, fr.genotype) & strcmp({groups.drug}, fr.drug), 1);
-        ax = nexttile(tl); hold(ax, 'on');
+        ax = nexttile(tl); hold(ax, 'on'); axs(end+1) = ax; %#ok<AGROW>
         setappdata(ax, 'ymin', config.visualization.ymin_mean_trace);
         tr = mean(fr.dfof_data(:, fr.hfs.analyzed), 2, 'omitnan');
         t = ((1:numel(tr)) - s1) * fd;
@@ -347,6 +350,7 @@ function fig = plot_hfs_file_traces(frs, groups, config)
         title(ax, ttl, 'Interpreter', 'none', 'FontSize', 7);
         grid(ax, 'on'); box(ax, 'on');
     end
+    share_ylim(axs, config);   % one y-scale for all panels (largest trace)
     title(tl, 'HFS per-file mean dF/F (QC-passed ROIs); red = train start / end', 'FontWeight', 'bold');
 end
 

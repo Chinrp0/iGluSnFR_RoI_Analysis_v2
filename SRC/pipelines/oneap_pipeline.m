@@ -140,11 +140,15 @@ function m = merge_trials(trial_res, numROIs)
     rowFields = {'peak_amplitude', 'peak_frame', 'time_to_peak_ms', 'is_responder', ...
         'prestim_sd', 'upper_threshold', 'lower_threshold', 'auc', 'auc_sync', ...
         'auc_async', 'tau_ms', 'tau_r2', 'tau_A', 'tau_offset', 'tau_peak_frame', ...
-        'prestim_base', 'sync_count', 'async_count', 'total_events', ...
-        'event_peak_times_ms', 'crossed_upper', 'noise_excluded', 'qc_category'};
+        'prestim_base', 'sync_count', 'async_count', 'n_spont', 'total_events', ...
+        'event_peak_times_ms', 'release_events', 'crossed_upper', 'noise_excluded', 'qc_category'};
     for f = 1:numel(rowFields)
         name = rowFields{f};
         m.(name) = cell2mat_or_cat(cellfun(@(t) t.(name), trial_res, 'UniformOutput', false));
+    end
+    % Event bin lengths: from the first trial that ran the detector
+    for k = 1:numel(trial_res)
+        if isfinite(trial_res{k}.events_ms.async), m.events_ms = trial_res{k}.events_ms; break; end
     end
     m.temporal_hist = cell2mat(cellfun(@(t) t.temporal_hist, trial_res, 'UniformOutput', false));
     m.numROIs = numROIs * numel(trial_res);
@@ -155,8 +159,8 @@ function m = merge_trials(trial_res, numROIs)
     m.responder_fraction_analyzable = m.n_responders / max(sum(c >= 1 & c <= 3), 1);
     m.n_sync_responders  = sum(c == 1);
     m.n_async_responders = sum(c == 2);
-    m.total_sync_events  = sum(m.sync_count);
-    m.total_async_events = sum(m.async_count);
+    m.total_sync_events  = sum(m.sync_count, 'omitnan');
+    m.total_async_events = sum(m.async_count, 'omitnan');
     m.qc_counts = struct('excluded', sum(c == 0), 'responder_sync', sum(c == 1), ...
         'responder_async', sum(c == 2), 'subthreshold', sum(c == 3), ...
         'noise_excluded', sum(c == 4));

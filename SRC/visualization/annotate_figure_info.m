@@ -34,11 +34,26 @@ function n = annotate_figure_info(info, frame_ms, figs)
         if isempty(items), continue; end
         txt = strjoin(items, ' | ');
         delete(findall(f, 'Tag', 'frame_time_note'));
+        reserve_bottom_strip(f);
         annotation(f, 'textbox', [0.005 0.002 0.6 0.03], 'String', txt, ...
             'Tag', 'frame_time_note', 'EdgeColor', 'none', 'FontSize', 8, ...
             'Color', [0.3 0.3 0.3], 'Interpreter', 'none', ...
             'HorizontalAlignment', 'left', 'VerticalAlignment', 'bottom');
         n = n + 1;
+    end
+end
+
+function reserve_bottom_strip(f)
+    % Tiled layouts with tight padding run to the figure's bottom edge, so the
+    % stamp would sit on the bottom x tick labels. Lift such layouts by a
+    % ~20 px strip (subplot figures already have a bottom margin).
+    hpx = getpixelposition(f); hpx = hpx(4);
+    strip = min(0.08, 20 / max(hpx, 1));
+    for tl = findall(f, 'Type', 'tiledlayout', 'Parent', f)'
+        op = tl.OuterPosition;   % normalized units
+        if op(2) < strip
+            tl.OuterPosition = [op(1), strip, op(3), op(4) - (strip - op(2))];
+        end
     end
 end
 

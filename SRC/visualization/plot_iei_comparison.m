@@ -73,9 +73,9 @@ function fig = plot_iei_comparison(results, options)
     [wt_f, wt_x] = ecdf(wt_ieis_plot);
     [mut_f, mut_x] = ecdf(mut_ieis_plot);
     
-    plot(wt_x, wt_f, 'b-', 'LineWidth', 2, 'DisplayName', lblA);
+    plot(wt_x, wt_f, '-', 'Color', colA, 'LineWidth', 2, 'DisplayName', lblA);
     hold on;
-    plot(mut_x, mut_f, 'r-', 'LineWidth', 2, 'DisplayName', lblB);
+    plot(mut_x, mut_f, '-', 'Color', colB, 'LineWidth', 2, 'DisplayName', lblB);
     
     xlabel('Inter-Event Interval (s)');
     ylabel('Cumulative Probability');
@@ -86,8 +86,11 @@ function fig = plot_iei_comparison(results, options)
     % Add median lines
     wt_median = median(wt_ieis_plot);
     mut_median = median(mut_ieis_plot);
-    xline(wt_median, 'b--', sprintf([lblA ': %.2fs'], wt_median), 'LineWidth', 1.5);
-    xline(mut_median, 'r--', sprintf([lblB ': %.2fs'], mut_median), 'LineWidth', 1.5);
+    % (values in the legend: on-line labels collide when the medians are close)
+    xline(wt_median, '--', 'Color', colA, 'LineWidth', 1.5, ...
+        'DisplayName', sprintf('%s median: %.2f s', lblA, wt_median));
+    xline(mut_median, '--', 'Color', colB, 'LineWidth', 1.5, ...
+        'DisplayName', sprintf('%s median: %.2f s', lblB, mut_median));
     
     %% Subplot 4: Box Plot Comparison
     subplot(2, 3, 4);
@@ -97,7 +100,7 @@ function fig = plot_iei_comparison(results, options)
     groups = [ones(length(wt_ieis_plot), 1); 2*ones(length(mut_ieis_plot), 1)];
     
     boxplot(all_ieis, groups, 'Labels', {lblA, lblB}, ...
-        'Colors', [colA; colB]);
+        'Colors', [colA; colB], 'Symbol', '+');
     ylabel('Inter-Event Interval (s)');
     title('IEI Box Plot Comparison');
     grid on;
@@ -154,7 +157,7 @@ function fig = plot_iei_comparison(results, options)
         grid on;
         
         % Add reference line at CV=1 (Poisson process)
-        xline(1, 'k--', 'Random (Poisson)', 'LineWidth', 1.5, 'Alpha', 0.7);
+        xline(1, 'k--', 'Random (Poisson)', 'LineWidth', 1.5, 'Alpha', 0.7, 'HandleVisibility', 'off');
     else
         text(0.5, 0.5, 'Insufficient data for CV analysis', ...
             'HorizontalAlignment', 'center', 'FontSize', 12);

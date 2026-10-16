@@ -3,9 +3,13 @@ function res = oneap_analyzer(dfof_data, baseline_stats, config)
     %
     % For each ROI (column of dfof_data) this computes, relative to the stimulus
     % frame (config.oneAP.stim_frame):
-    %   - ALL peaks above threshold (multi-peak local-maxima detection), each
-    %     classified as synchronous or asynchronous by its post-stim peak time
-    %   - synchronous vs asynchronous peak counts + a post-stim time histogram
+    %   - ALL peaks above threshold (multi-peak local-maxima detection) for the
+    %     responder call
+    %   - synchronous vs asynchronous RELEASE EVENT counts + an onset-latency
+    %     histogram, from the same detector and parameters as 2AP
+    %     (twoap_sync_async_events / config.twoAP.events: binned on event onset,
+    %     <= sync_cutoff_ms = sync; pre-stim events give the spontaneous rate;
+    %     only at frame times <= events.max_frame_ms, else NaN)
     %   - evoked peak amplitude / time-to-peak (the largest peak above threshold,
     %     wherever it falls post-stim; sync/async is only a timing label of it)
     %   - area under the curve (AUC, baseline-subtracted dF/F)
@@ -65,21 +69,31 @@ function res = oneap_analyzer(dfof_data, baseline_stats, config)
     ms2frame = @(t) stim_frame + round(t / frame_dur);
 
     auc_f    = [max(ms2frame(p.auc_window_ms(1)), 1),  min(ms2frame(p.auc_window_ms(2)), numFrames)];
-    % AUC split by release timing: synchronous vs asynchronous windows (the same
-    % windows used for the event-count split). With the default config these tile
-    % the total AUC window, so auc_sync + auc_async ~= auc.
+    % AUC split by release timing: synchronous vs asynchronous windows. The async
+    % AUC runs from the async start to the END OF THE AUC WINDOW (not the shorter
+    % async event window), so the two tile the total and auc_sync + auc_async ~= auc.
     sync_auc_f  = [max(ms2frame(p.sync_window_ms(1)), 1),  min(ms2frame(p.sync_window_ms(2)), numFrames)];
-    async_auc_f = [max(ms2frame(p.async_window_ms(1)), 1), min(ms2frame(p.async_window_ms(2)), numFrames)];
+    async_auc_f = [max(ms2frame(p.async_window_ms(1)), 1), min(ms2frame(p.auc_window_ms(2)), numFrames)];
     post_end = min(ms2frame(p.async_window_ms(2)), numFrames);   % peak search end
     post_idx = stim_frame:post_end;
 
-    % Temporal histogram (ms, post-stim) -----------------------------------
+    % Sync / async release events: the SAME detector and parameters as 2AP
+    % (twoap_sync_async_events, config.twoAP.events): events in [stim, stim +
+    % events.async_window_ms], binned by ONSET latency (<= sync_cutoff_ms = sync),
+    % plus the pre-stim baseline's events for the spontaneous rate. Only run at
+    % frame times <= events.max_frame_ms (else the counts are NaN, as in 2AP).
+    ev_cfg = config.twoAP.events;
+    ev_on  = frame_dur <= ev_cfg.max_frame_ms;
+    ev_hi  = min(stim_frame + round(ev_cfg.async_window_ms / frame_dur), numFrames);
+    cfg_ev = config; cfg_ev.frame_dur_ms = frame_dur;   % the detector reads frame_dur_ms
+
+    % Temporal histogram of event ONSETS (ms, post-stim) -------------------
     % Centre the bins ON the frame grid (0, bin_size, 2*bin_size, ...) so each
     % bin sits on a real possible event time. Edges fall at the half-bin points
     % (-bin/2, +bin/2, ...), so events - which land exactly on frame times -
     % never sit on an edge and are counted at the matching centre.
     half_bin       = p.bin_size_ms / 2;
-    bin_centers_ms = 0 : p.bin_size_ms : p.async_window_ms(2);
+    bin_centers_ms = 0 : p.bin_size_ms : ev_cfg.async_window_ms;
     bin_edges_ms   = [bin_centers_ms - half_bin, bin_centers_ms(end) + half_bin];
     nBins = numel(bin_centers_ms);
 
@@ -100,11 +114,17 @@ function res = oneap_analyzer(dfof_data, baseline_stats, config)
     tau_A           = nan(1, numROIs);   % fitted amplitude  (for plotting)
     tau_offset      = nan(1, numROIs);   % fitted offset + baseline (dF/F units)
     tau_peak_frame  = nan(1, numROIs);   % decay-onset peak frame (within tau window)
-    sync_count      = zeros(1, numROIs);
-    async_count     = zeros(1, numROIs);
+    sync_count      = nan(1, numROIs);   % release events with onset <= sync cutoff
+    async_count     = nan(1, numROIs);   % later release events (to async_window_ms)
+    n_spont         = nan(1, numROIs);   % events in the pre-stim baseline
+    largest_is_sync = false(1, numROIs); % largest release event is sync
+    % (left NaN for ROIs that are not scored, so they drop out of every sum)
+    ev_ms = struct('sync', NaN, 'async', NaN, 'spont', NaN);   % bin lengths (ms)
     total_events    = zeros(1, numROIs);
     temporal_hist   = zeros(nBins, numROIs);
-    event_peak_times_ms = cell(1, numROIs);
+    event_peak_times_ms = cell(1, numROIs);   % validated responder peaks (0-250 ms)
+    release_events  = repmat(struct('lat_ms', zeros(1, 0), 'onset_ms', zeros(1, 0), ...
+        'is_sync', false(1, 0)), 1, numROIs);   % shared-detector events per ROI
 
     % QC bookkeeping: did the trace ever clear the upper (3.5 sigma) gate, and
     % was it analyzable at all (enough finite pre-stim, valid noise SD)?
@@ -112,12 +132,9 @@ function res = oneap_analyzer(dfof_data, baseline_stats, config)
     analyzed        = false(1, numROIs);
     noise_excluded  = false(1, numROIs);   % dropped: pre-stim noise > max_noise_sd
 
-    % Sync/async edges in FRAMES from stim, rounded like the AUC windows above.
-    % Peak times sit on the frame grid (k * frame_dur, e.g. 10.0075 ms), so a
-    % ms comparison against a round edge (t <= 10) silently drops the frame
-    % that lands just past it; comparing frame offsets avoids that.
-    [sync_lo_f, sync_hi_f]   = deal(round(p.sync_window_ms(1)  / frame_dur), round(p.sync_window_ms(2)  / frame_dur));
-    [async_lo_f, async_hi_f] = deal(round(p.async_window_ms(1) / frame_dur), round(p.async_window_ms(2) / frame_dur));
+    % Sync window edges in FRAMES from stim (fallback qc label when event
+    % binning is off). Peak times sit on the frame grid, so compare frame offsets.
+    [sync_lo_f, sync_hi_f] = deal(round(p.sync_window_ms(1) / frame_dur), round(p.sync_window_ms(2) / frame_dur));
 
     for roi = 1:numROIs
         trace = dfof_data(:, roi);
@@ -206,15 +223,6 @@ function res = oneap_analyzer(dfof_data, baseline_stats, config)
             t_ms   = (pk_abs - stim_frame) * frame_dur;  % time from stim
             ev_peak_times(end+1) = t_ms; %#ok<AGROW>
 
-            % Classify each peak by timing (synchronous vs asynchronous release).
-            % This is a label only - it does NOT decide responder status.
-            k_f = pk_abs - stim_frame;                   % frames from stim
-            if k_f >= sync_lo_f && k_f <= sync_hi_f
-                sync_count(roi) = sync_count(roi) + 1;
-            elseif k_f > async_lo_f && k_f <= async_hi_f
-                async_count(roi) = async_count(roi) + 1;
-            end
-
             % The evoked response = the LARGEST sustained peak above threshold,
             % wherever it falls in the post-stim window. Amplitude, time-to-peak
             % and the responder call all key off this peak (the indicator-
@@ -233,15 +241,31 @@ function res = oneap_analyzer(dfof_data, baseline_stats, config)
 
         % Responder = at least one sustained evoked peak above threshold (the
         % largest of which is the measured response). Synchronous vs asynchronous
-        % is a timing sub-label of that peak, tracked separately in sync_count /
-        % async_count - not a gate on responder status.
+        % is counted separately by the shared release-event detector below - not
+        % a gate on responder status.
         is_responder(roi) = total_events(roi) >= 1;
         tau_onset = peak_frame(roi);       % decay starts at the largest evoked peak
         tau_peak_frame(roi) = peak_frame(roi);
 
-        % Temporal histogram of post-stim peak times
-        if ~isempty(ev_peak_times)
-            temporal_hist(:, roi) = histcounts(ev_peak_times, bin_edges_ms)';
+        % --- Sync / async release events (same detector + parameters as 2AP) ---
+        if ev_on
+            e1 = twoap_sync_async_events(trace, stim_frame, ev_hi, base_mean, sd, cfg_ev);
+            es = twoap_sync_async_events(trace, prestim_idx(1), prestim_idx(end), base_mean, sd, cfg_ev);
+            sync_count(roi)  = e1.n_sync;
+            async_count(roi) = e1.n_async;
+            n_spont(roi)     = numel(es.lat_ms);
+            ev_ms = struct('sync', e1.sync_ms, 'async', e1.async_ms, ...
+                'spont', (prestim_idx(end) - prestim_idx(1) + 1) * frame_dur);
+            release_events(roi) = struct('lat_ms', e1.lat_ms, 'onset_ms', e1.onset_ms, ...
+                'is_sync', e1.is_sync);
+            if ~isempty(e1.height)
+                [~, ib] = max(e1.height);
+                largest_is_sync(roi) = e1.is_sync(ib);
+            end
+            % Temporal histogram of release-event ONSET latencies
+            if ~isempty(e1.onset_ms)
+                temporal_hist(:, roi) = histcounts(e1.onset_ms, bin_edges_ms)';
+            end
         end
 
         % --- AUC (baseline-subtracted dF/F), total + sync / async split ---
@@ -291,14 +315,20 @@ function res = oneap_analyzer(dfof_data, baseline_stats, config)
     % --- Response-type QC classification ----------------------------------
     % Codes (index qc_category_names by code+1). Codes 1 and 2 are BOTH
     % responders (is_responder = any sustained evoked peak); the split is by the
-    % timing of the LARGEST peak (synchronous vs asynchronous release):
+    % timing of the LARGEST release event (onset <= events.sync_cutoff_ms, the
+    % 2AP rule; at slow frames, without event binning: largest peak time in
+    % oneAP.sync_window_ms):
     %   0 excluded        - not analyzable (all-NaN / <5 pre-stim / bad SD)
-    %   1 responder_sync  - responder whose largest peak is in the sync window
-    %   2 responder_async - responder whose largest peak is in the async window
+    %   1 responder_sync  - responder whose largest event is synchronous
+    %   2 responder_async - responder whose largest event is asynchronous
     %   3 subthreshold    - analyzable but no peak cleared the threshold
     %   4 noise_excluded  - dropped by the pre-stim noise ceiling (max_noise_sd)
-    ttp_f = peak_frame - stim_frame;                     % frames from stim (NaN if none)
-    peak_is_sync = is_responder & (ttp_f >= sync_lo_f) & (ttp_f <= sync_hi_f);
+    if ev_on
+        peak_is_sync = is_responder & largest_is_sync;
+    else
+        ttp_f = peak_frame - stim_frame;                 % frames from stim (NaN if none)
+        peak_is_sync = is_responder & (ttp_f >= sync_lo_f) & (ttp_f <= sync_hi_f);
+    end
     qc_category = zeros(1, numROIs);
     qc_category(analyzed)          = 3;   % subthreshold (default)
     qc_category(total_events >= 1) = 2;   % responder, largest peak asynchronous
@@ -339,11 +369,17 @@ function res = oneap_analyzer(dfof_data, baseline_stats, config)
     res.tau_peak_frame  = tau_peak_frame;
     res.prestim_base    = base_mean_roi;     % per-ROI pre-stim mean (dF/F units)
 
+    % Sync / async release events (shared 2AP detector; NaN when frames are
+    % slower than events.max_frame_ms or the ROI was not scored)
+    res.events_enabled  = ev_on;
     res.sync_count      = sync_count;
     res.async_count     = async_count;
-    res.total_events    = total_events;
+    res.n_spont         = n_spont;          % events in the pre-stim baseline
+    res.events_ms       = ev_ms;            % sync / async / spont bin lengths (ms)
+    res.release_events  = release_events;   % per ROI: lat_ms, onset_ms, is_sync
+    res.total_events    = total_events;     % validated responder peaks (0-250 ms)
 
-    res.temporal_hist   = temporal_hist;        % [nBins x ROIs]
+    res.temporal_hist   = temporal_hist;        % [nBins x ROIs] event-onset counts
     res.bin_centers_ms  = bin_centers_ms;
     res.bin_edges_ms    = bin_edges_ms;
     res.event_peak_times_ms = event_peak_times_ms;
@@ -359,8 +395,8 @@ function res = oneap_analyzer(dfof_data, baseline_stats, config)
     % raw per-window peak counts, for the synchronous/asynchronous sub-analysis.
     res.n_sync_responders   = sum(qc_category == 1);  % largest peak in sync window
     res.n_async_responders  = sum(qc_category == 2);  % largest peak in async window
-    res.total_sync_events   = sum(sync_count);        % all peaks in sync window
-    res.total_async_events  = sum(async_count);       % all peaks in async window
+    res.total_sync_events   = sum(sync_count, 'omitnan');    % all sync release events
+    res.total_async_events  = sum(async_count, 'omitnan');   % all async release events
 
     % Gate-by-gate QC diagnostic
     res.crossed_upper      = crossed_upper;

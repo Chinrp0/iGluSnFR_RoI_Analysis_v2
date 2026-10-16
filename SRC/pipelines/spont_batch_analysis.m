@@ -318,7 +318,8 @@ function fig = create_frequency_plot_final(wt_data, mut_data, comparison, viz)
     mut_freqs = mut_data.all_roi_frequencies(mut_data.all_roi_frequencies > 0);
     
     % Subplot 1: histogram with viz.freq_bin_hz bins
-    subplot(2, 2, 1);
+    tl = tiledlayout(fig, 2, 2, 'TileSpacing', 'compact', 'Padding', 'compact');
+    nexttile(tl, 1);
     max_freq = max([wt_freqs, mut_freqs]);
     edges = 0:viz.freq_bin_hz:(max_freq + viz.freq_bin_hz);
 
@@ -339,25 +340,19 @@ function fig = create_frequency_plot_final(wt_data, mut_data, comparison, viz)
     mut_mean = mean(mut_freqs);
     
     % Subplot 2: Box plot with mean labels
-    subplot(2, 2, 2);
+    nexttile(tl, 2);
     all_freqs = [wt_freqs, mut_freqs];
     groups = [ones(1, length(wt_freqs)), 2*ones(1, length(mut_freqs))];
     
-    boxplot(all_freqs, groups, 'Labels', {lblA, lblB}, 'Colors', [colA; colB]);
+    boxplot(all_freqs, groups, 'Labels', {lblA, lblB}, 'Colors', [colA; colB], 'Symbol', '+');
     ylabel('Event Frequency (Hz)');
     title('Frequency Box Plot Comparison');
     grid on;
     
     % Add mean frequency labels
     hold on;
-    plot(1, wt_mean, 'bd', 'MarkerSize', 8, 'MarkerFaceColor', 'blue', 'LineWidth', 2);
-    plot(2, mut_mean, 'rd', 'MarkerSize', 8, 'MarkerFaceColor', 'red', 'LineWidth', 2);
-    
     y_range = max(all_freqs) - min(all_freqs);
-    text(1, wt_mean + y_range * 0.05, sprintf([lblA ': %.3f Hz'], wt_mean), ...
-        'HorizontalAlignment', 'center', 'BackgroundColor', 'white', 'EdgeColor', 'blue', 'FontSize', 10);
-    text(2, mut_mean + y_range * 0.08, sprintf([lblB ': %.3f Hz'], mut_mean), ...
-        'HorizontalAlignment', 'center', 'BackgroundColor', 'white', 'EdgeColor', 'red', 'FontSize', 10);
+    label_box_means([wt_mean, mut_mean], {lblA, lblB}, [colA; colB], y_range, '%.3f Hz');
     
     % Statistical annotation
     if isfield(comparison, 'frequency_pvalue') && ~isnan(comparison.frequency_pvalue)
@@ -380,13 +375,13 @@ function fig = create_frequency_plot_final(wt_data, mut_data, comparison, viz)
     end
     
     % Subplot 3: Cumulative distributions
-    subplot(2, 2, 3);
+    nexttile(tl, 3);
     [wt_f, wt_x] = ecdf(wt_freqs);
     [mut_f, mut_x] = ecdf(mut_freqs);
     
-    plot(wt_x, wt_f, 'b-', 'LineWidth', 2, 'DisplayName', lblA);
+    plot(wt_x, wt_f, '-', 'Color', colA, 'LineWidth', 2, 'DisplayName', lblA);
     hold on;
-    plot(mut_x, mut_f, 'r-', 'LineWidth', 2, 'DisplayName', lblB);
+    plot(mut_x, mut_f, '-', 'Color', colB, 'LineWidth', 2, 'DisplayName', lblB);
     
     xlabel('Event Frequency (Hz)');
     ylabel('Cumulative Probability');
@@ -395,7 +390,7 @@ function fig = create_frequency_plot_final(wt_data, mut_data, comparison, viz)
     grid on;
     
     % Subplot 4: Summary
-    subplot(2, 2, 4); axis off;
+    nexttile(tl, 4); axis off;
     summary_text = {
         'FREQUENCY COMPARISON SUMMARY';
         '';
@@ -415,7 +410,7 @@ function fig = create_frequency_plot_final(wt_data, mut_data, comparison, viz)
     text(0.05, 0.95, summary_text, 'FontSize', 10, 'VerticalAlignment', 'top', ...
         'HorizontalAlignment', 'left', 'Units', 'normalized', 'FontName', 'FixedWidth');
     
-    sgtitle(['Event Frequency Comparison: ' lblA ' vs ' lblB ' (Active ROIs Only)'], 'FontSize', 16, 'FontWeight', 'bold');
+    title(tl, ['Event Frequency Comparison: ' lblA ' vs ' lblB ' (Active ROIs Only)'], 'FontSize', 16, 'FontWeight', 'bold');
 end
 
 function fig = create_activity_plot_final(wt_data, mut_data, comparison, viz)
@@ -428,7 +423,8 @@ function fig = create_activity_plot_final(wt_data, mut_data, comparison, viz)
     mut_events = mut_data.all_roi_event_counts(mut_data.all_roi_event_counts > 0);
     
     % Events per active ROI
-    subplot(2, 2, 1);
+    tl = tiledlayout(fig, 2, 1, 'TileSpacing', 'compact', 'Padding', 'compact');
+    nexttile(tl, 1);
     if ~isempty(wt_events) && ~isempty(mut_events)
         max_events = max([wt_events, mut_events]);
         edges = 0.5:1:(max_events + 0.5);
@@ -444,7 +440,7 @@ function fig = create_activity_plot_final(wt_data, mut_data, comparison, viz)
     end
     
     % Activity categories (active ROIs only)
-    subplot(2, 2, 3);
+    nexttile(tl, 2);
     if ~isempty(wt_events) && ~isempty(mut_events)
         activity_bins = activity_categories(viz.activity_bin_edges);
 
@@ -456,14 +452,15 @@ function fig = create_activity_plot_final(wt_data, mut_data, comparison, viz)
             mut_counts(i) = sum(activity_bins{i, 2}(mut_events));
         end
         
-        bar([wt_counts; mut_counts]', 'grouped');
+        hb = bar([wt_counts; mut_counts]', 'grouped');
+        hb(1).FaceColor = colA; hb(2).FaceColor = colB;
         xlabel('Activity Category'); ylabel('Active ROI Count');
         title('Active ROI Categories (No Inactive ROIs)');
         set(gca, 'XTickLabel', activity_bins(:, 1));
         legend(lblA, lblB, 'Location', 'best'); grid on; xtickangle(45);
     end
     
-    sgtitle(['Active ROI Comparison: ' lblA ' vs ' lblB ' (Inactive ROIs Excluded)'], 'FontSize', 16, 'FontWeight', 'bold');
+    title(tl, ['Active ROI Comparison: ' lblA ' vs ' lblB ' (Inactive ROIs Excluded)'], 'FontSize', 16, 'FontWeight', 'bold');
 end
 
 %% === OTHER REQUIRED FUNCTIONS ===
@@ -485,7 +482,8 @@ function fig = create_amplitude_plot_final(wt_data, mut_data, comparison, viz)
     end
     
     % 2x2 layout
-    subplot(2, 2, 1);
+    tl = tiledlayout(fig, 2, 2, 'TileSpacing', 'compact', 'Padding', 'compact');
+    nexttile(tl, 1);
     min_amp = min([wt_amps, mut_amps]);
     max_amp = max([wt_amps, mut_amps]);
     edges = linspace(min_amp, max_amp, 50);
@@ -506,10 +504,10 @@ function fig = create_amplitude_plot_final(wt_data, mut_data, comparison, viz)
     wt_mean = mean(wt_amps);
     mut_mean = mean(mut_amps);
     y_lim = ylim;
-    plot([wt_mean, wt_mean], y_lim, 'b--', 'LineWidth', 2);
-    plot([mut_mean, mut_mean], y_lim, 'r--', 'LineWidth', 2);
+    plot([wt_mean, wt_mean], y_lim, '--', 'Color', colA, 'LineWidth', 2, 'HandleVisibility', 'off');
+    plot([mut_mean, mut_mean], y_lim, '--', 'Color', colB, 'LineWidth', 2, 'HandleVisibility', 'off');
     
-    subplot(2, 2, 2);
+    nexttile(tl, 2);
     % Sample data for box plot if too large (seeded, so the figure is reproducible)
     rs = RandStream('mt19937ar', 'Seed', viz.random_seed);
     wt_sample = datasample(rs, wt_amps, min(viz.box_max_points, length(wt_amps)), 'Replace', false);
@@ -517,10 +515,16 @@ function fig = create_amplitude_plot_final(wt_data, mut_data, comparison, viz)
     
     all_amps = [wt_sample, mut_sample];
     groups = [ones(1, length(wt_sample)), 2*ones(1, length(mut_sample))];
-    boxplot(all_amps, groups, 'Labels', {lblA, lblB}, 'Colors', [colA; colB]);
+    boxplot(all_amps, groups, 'Labels', {lblA, lblB}, 'Colors', [colA; colB], 'Symbol', '+');
     ylabel('Event Amplitude (dF/F)');
-    title('Amplitude Box Plot Comparison');
+    title(sprintf('Amplitude Box Plot Comparison (box: <=%d events/group; means: all events)', ...
+        viz.box_max_points));
     grid on;
+
+    % Mean amplitude labels (means of ALL events, not the box-plot sample)
+    hold on;
+    label_box_means([wt_mean, mut_mean], {lblA, lblB}, [colA; colB], ...
+        max(all_amps) - min(all_amps), '%.4f dF/F');
     
     % Add statistical annotation
     if isfield(comparison, 'amplitude_pvalue') && ~isnan(comparison.amplitude_pvalue)
@@ -543,13 +547,13 @@ function fig = create_amplitude_plot_final(wt_data, mut_data, comparison, viz)
         ylim([0, y_text + y_range*0.05]);
     end
     
-    subplot(2, 2, 3);
+    nexttile(tl, 3);
     [wt_f, wt_x] = ecdf(wt_amps);
     [mut_f, mut_x] = ecdf(mut_amps);
     
-    plot(wt_x, wt_f, 'b-', 'LineWidth', 2, 'DisplayName', lblA);
+    plot(wt_x, wt_f, '-', 'Color', colA, 'LineWidth', 2, 'DisplayName', lblA);
     hold on;
-    plot(mut_x, mut_f, 'r-', 'LineWidth', 2, 'DisplayName', lblB);
+    plot(mut_x, mut_f, '-', 'Color', colB, 'LineWidth', 2, 'DisplayName', lblB);
     
     xlabel('Event Amplitude (dF/F)');
     ylabel('Cumulative Probability');
@@ -557,7 +561,7 @@ function fig = create_amplitude_plot_final(wt_data, mut_data, comparison, viz)
     legend('Location', 'best');
     grid on;
     
-    subplot(2, 2, 4); axis off;
+    nexttile(tl, 4); axis off;
     
     summary_text = {
         'AMPLITUDE COMPARISON SUMMARY';
@@ -587,7 +591,19 @@ function fig = create_amplitude_plot_final(wt_data, mut_data, comparison, viz)
     text(0.05, 0.95, summary_text, 'FontSize', 10, 'VerticalAlignment', 'top', ...
         'HorizontalAlignment', 'left', 'Units', 'normalized', 'FontName', 'FixedWidth');
     
-    sgtitle(['Event Amplitude Comparison: ' lblA ' vs ' lblB], 'FontSize', 16, 'FontWeight', 'bold');
+    title(tl, ['Event Amplitude Comparison: ' lblA ' vs ' lblB], 'FontSize', 16, 'FontWeight', 'bold');
+end
+
+function label_box_means(means, labels, colors, y_range, fmt)
+    % Mean diamond + boxed "<group>: <mean>" label over each box (x = 1, 2, ...)
+    % in the group's colour; labels staggered so neighbouring boxes don't overlap.
+    for k = 1:numel(means)
+        plot(k, means(k), 'd', 'MarkerSize', 8, 'MarkerEdgeColor', colors(k, :), ...
+            'MarkerFaceColor', colors(k, :), 'LineWidth', 2);
+        text(k, means(k) + y_range * (0.02 + 0.03 * k), sprintf(['%s: ' fmt], labels{k}, means(k)), ...
+            'HorizontalAlignment', 'center', 'BackgroundColor', 'white', ...
+            'EdgeColor', colors(k, :), 'FontSize', 10, 'Interpreter', 'none');
+    end
 end
 
 function fig = create_file_summary_final(wt_data, mut_data, comparison)
@@ -597,7 +613,8 @@ function fig = create_file_summary_final(wt_data, mut_data, comparison)
     fig = figure('Name', ['File-Level Summary: ' lblA ' vs ' lblB], 'Position', [400, 100, 1200, 800]);
     
     % 2x2 layout
-    subplot(2, 2, 1);
+    tl = tiledlayout(fig, 2, 2, 'TileSpacing', 'compact', 'Padding', 'compact');
+    nexttile(tl, 1);
     if ~isempty(wt_data.file_summaries) && ~isempty(mut_data.file_summaries)
         wt_events_per_file = arrayfun(@(x) x.num_events, wt_data.file_summaries);
         mut_events_per_file = arrayfun(@(x) x.num_events, mut_data.file_summaries);
@@ -615,7 +632,7 @@ function fig = create_file_summary_final(wt_data, mut_data, comparison)
         grid on;
     end
     
-    subplot(2, 2, 2);
+    nexttile(tl, 2);
     if ~isempty(wt_data.file_summaries) && ~isempty(mut_data.file_summaries)
         wt_active_per_file = arrayfun(@(x) x.active_rois, wt_data.file_summaries);
         mut_active_per_file = arrayfun(@(x) x.active_rois, mut_data.file_summaries);
@@ -633,7 +650,7 @@ function fig = create_file_summary_final(wt_data, mut_data, comparison)
         grid on;
     end
     
-    subplot(2, 2, 3);
+    nexttile(tl, 3);
     if ~isempty(wt_data.file_summaries) && ~isempty(mut_data.file_summaries)
         wt_activity_fractions = arrayfun(@(x) 100 * x.active_rois / x.num_rois, wt_data.file_summaries);
         mut_activity_fractions = arrayfun(@(x) 100 * x.active_rois / x.num_rois, mut_data.file_summaries);
@@ -651,7 +668,7 @@ function fig = create_file_summary_final(wt_data, mut_data, comparison)
         grid on;
     end
     
-    subplot(2, 2, 4); axis off;
+    nexttile(tl, 4); axis off;
     
     summary_text = {
         'FILE-LEVEL SUMMARY';
@@ -685,7 +702,7 @@ function fig = create_file_summary_final(wt_data, mut_data, comparison)
     text(0.05, 0.95, summary_text, 'FontSize', 10, 'VerticalAlignment', 'top', ...
         'HorizontalAlignment', 'left', 'Units', 'normalized', 'FontName', 'FixedWidth');
     
-    sgtitle(['File-Level Summary: ' lblA ' vs ' lblB], 'FontSize', 16, 'FontWeight', 'bold');
+    title(tl, ['File-Level Summary: ' lblA ' vs ' lblB], 'FontSize', 16, 'FontWeight', 'bold');
 end
 
 function file_results = process_files(entries, config)

@@ -82,6 +82,128 @@ Shared plot helpers added: `draw_ppr_series`, `finish_ppr_axis`.
   peak-vs-baseline-excursion was the discriminating metric). NB many 30 ms auc=0.00 in montage = P2
   fused on P1 decay -> clipped; item #4 (decay subtraction) would recover those.
 
+### DONE 2026-10-15 (new PRIMARY PPR: pooled gate-either, decay-subtracted)
+- **Shared amplitude function** `tracenorm/twoap_pulse_amplitudes.m`: A1/A2 five ways (peak_max,
+  win_mean [amp_window_ms 5-20], sync, p1lock, decay_sub). Used by twoap_analyzer (per ROI) AND
+  trace_ppr (avg traces) -> same frames / local-max rule / baseline (trace_ppr now uses prestim_idx,
+  i.e. drops the 100 ms guard). Effect on old ROM curve <= 0.01. Test: `tests/test_twoap_pulse_amplitudes.m`.
+- **Decay subtraction**: pulse-1 template = group's longest-ISI (>= 250 ms) cs_avg trace, stim1..stim2,
+  peak-normalised, zeroed once < `decay_template_min_frac` (0.05). Scaled to each trace's pre-stim2
+  residual, subtracted in [stim2, stim2+peak_search_ms]; A2 = largest local max of the subtracted window.
+  Synthetic: peak_max underestimates true PPR 18-23% at 30 ms; decay_sub exact.
+- **PRIMARY PPR** (fig panel 1, summary, `ppr_by_isi.<grp>.primary`, `twoap_per_coverslip.csv`):
+  per coverslip x ISI, SumA2_decay / SumA1 over **gate-either** ROIs (is_responder1 OR incremental
+  peak2_amp >= upper_sigma*sd), mean across coverslips. Panel 3 = QC ref: ungated avg trace, decay-sub.
+- **Diagnostic** (`plot_twoap_ppr_diagnostic`, `_distributions`, `_decay_examples`, `print_ppr_diagnostic`):
+  mean of per-ROI ratios is inflated 1.2-11x (small A1) -> never use; pooled ~= avg trace; per-ROI
+  p1lock biased low (latency picked on noise); sync unstable at short ISI.
+- Per-ROI CSV gained is_responder2_incr, gate_either, a2_decay_sub, ppr_decay_sub.
+- Datasets in scope: 3fast NGR 5 ms + SF4f 10 ms (skip the 5 ms SF4f file); pdgfr lacks Recordings.csv.
+
+### FIXED 2026-10-15: pulse-1 gate collapsed at 30 ms ISI
+- At 30 ms the pulse-1 window is cut to stim2-1 (10 ms frames: 0/10/20 ms). Pulse 1 peaks ~20 ms =
+  the window's last frame, and findpeaks never counts endpoints -> is_responder1 rate 5-7% at 30 ms vs
+  ~45% at other ISIs (SF4f). Gate-either then ~= gate-A2 -> PPR biased UP (SF4f 30 ms 2.1 vs 1.3-1.6
+  no-gate). 3fast 30 ms milder (15-18% vs 20-34%). Fix candidate: when the window is truncated by
+  stim2, allow the window-end max to pass the P1 gate (amplitude + Schmitt run), or drop 30 ms.
+- **Fix**: when stim2 cuts the pulse-1 window short, its LAST frame counts as a peak candidate if it
+  rose into it (twoap_analyzer window_peak `allow_end` for the gate, twoap_pulse_amplitudes local_peak
+  for A1); same >= upper / Schmitt-run / baseline-floor checks. NOT caused by the 10.0075 ms frame time
+  (30/10.0075 and 30/10 both round to 3 frames; Recordings.csv refined stims are 3 frames apart).
+  Effect: only 30 ms rows change. SF4f P1 responders 5-7% -> 18-52%; primary PPR 2.09/2.05/2.12 ->
+  1.67/1.44/1.53 (R213W/Doc2b-WT/WT; noGate 1.61/1.48/1.29). 3fast 30 ms -0.08 to -0.17. SF4f 30 ms is
+  still low-confidence: pulses fuse in many ROIs (trace rising through stim2).
+
+### FINDING 2026-10-15: what gate-either excludes (3fast NGR)
+- Diagnostic figs (gating-bias, estimator comparison, per-ROI distributions) now behind
+  `options.diagnosticPlots` (default false). Amplitude fig (Fig 2) "incremental" is still LEGACY
+  (peak-max above flat residual, ungated avg trace), not decay-subtracted.
+- Excluded = QC-passed ROIs failing both gates: ~55-70% of ROIs, ~half of total SumA1/SumA2. NOT noise:
+  their avg trace responds to both pulses, but A1 is ~1/3 of included ROIs (0.006-0.008 vs 0.016-0.022 dF/F)
+  and they FACILITATE MORE (avg-trace decay-sub PPR, excl vs incl: WT 1.75/1.42/1.09/1.25 vs
+  1.39/1.08/1.07/0.97; R213W 2.14/1.62/1.69/1.83 vs 1.38/1.07/1.16/1.13 at 30/60/90/120 ms; ~equal or
+  lower at 1000 ms). Consistent with low-Pr boutons. Their avg trace also decays slower after pulse 2.
+- So no-gate PPR > gate-either PPR because the gate drops a weak, strongly facilitating subpopulation,
+  not because of regression to the mean.
+- Per-ROI pooled PPR UNDERSTATES the excluded set (1.11 vs 1.42 avg trace at WT 60 ms): peak-picking a
+  sub-threshold trace adds a noise bump to both A1 and A2, compressing the ratio toward 1. For included
+  ROIs pooled == avg trace (1.08 vs 1.08). => sub-threshold ROIs need average-trace estimates.
+- **Reporting decision (user, 2026-10-15)**: gate-either 5 sigma stays PRIMARY; the excluded ROIs are
+  reported as a separate **sub-threshold** population, PPR from their per-coverslip AVERAGE trace
+  (decay-sub) -> dashed curve in PPR fig panel 1, `ppr_diag.sub_threshold`, CSV `ppr_sub_threshold`,
+  summary `subThr`. Excluded ROIs are 1.6x noisier at baseline (median sd 0.0081 vs 0.0050) AND smaller
+  (median ~3 sigma vs ~7). Fig 2 (amplitudes) now = mean A1 / decay-sub A2 per gate-either ROI per coverslip
+  (ratio == primary PPR); legacy incremental / from-baseline bars removed.
+
+### DONE 2026-10-15: every 2AP figure on the decay-subtracted basis
+- New helper `trace_ppr_primary` (avg-trace A2/A1 with the group's decay template; peak-max only if
+  the group has no template). Used by the gating figure and the coverslip-average tiles.
+- **Gating figure** now decay-subtracted: its no-gate curve == PPR fig panel 3 EXACTLY (verified 0 diff,
+  3fast + SF4f 10 ms). Labels say "= PPR fig panel 3" (was the stale "= primary ROM").
+- **Coverslip-average tiles**: title = `PPR <primary, gate-either pooled, from cs_rows> (trace <this avg
+  trace, decay-sub = panel 3>) Q <panel 2>`. Across-ROI SEM band REMOVED (ROIs are pseudoreplicates);
+  grey region (c#) means show the spread. Shading now = blue/red peak-search windows (same as montage and
+  decay tiles); Q-window end = grey dotted line. ISIs split at <=120 / >120 ms (none dropped any more).
+- **Montage**: shows gate-either ROIs, tag [A1|A2|A1+A2]; title = A1 and decay-sub A2 (what the primary
+  pools), NOT a per-ROI ratio (A2-only ROIs have tiny A1 -> ratios of 14, NaN). Orange diamond =
+  decay-sub A2 (as in decay tiles); p1-lock marker changed d -> ^ so diamond means one thing.
+- Coverslip-average + decay tiles use `make_time_axis` (same x unit as the montage). PPR fig white bg.
+- NB MATLAB TeX has no `\diamond` (it errors); use the word.
+- **Q window single-sourced**: `tracenorm/twoap_charge_window.m` returns the integrated frames
+  [stim1, stim2 + round(auc_post_ms / frame)]; used by twoap_analyzer (per-ROI q_pair), trace_ppr
+  (avg-trace Q) AND the grey band in the coverslip-average + montage figures, so the shading IS the
+  integrated window (verified: band ends at stim2 + 500.9 ms = 100 frames at 5.009 ms). Q values unchanged.
+  Dropped the analyzer's hidden 250 ms default for auc_post_ms (now required from config).
+
+### DONE 2026-10-15: sync / async event binning (3fast only)
+- `tracenorm/twoap_sync_async_events.m`: every event in a window = local max >= upper (5 sigma),
+  Schmitt run, RISE >= `events.min_prominence_sigma` (5) sd above the trough BEFORE it (left trough
+  only; findpeaks' two-sided prominence killed real pulse-1 peaks at 30 ms ISI, where the window is
+  cut by stim2 -> P(sync) P1 0.04-0.09 instead of ~0.2). `allow_end` for the cut pulse-1 window.
+- Windows: P1 = [stim1, min(stim2-1, stim1+100 ms)], P2 = [stim2, stim2+100 ms]; spont = pre-stim1.
+  Config `config.twoAP.events` (sync_cutoff_ms, async_window_ms, min_prominence_sigma, max_frame_ms=6:
+  10 ms SF4f is skipped).
+- **Cutoff on PEAK latency, 30 ms** (user, 2026-10-15). Data: 3fast first-event peaks spread 5-30 ms
+  (mode 15 ms, rise + frame integration), then a flat async tail ~0.001-0.002 ev/ROI/frame to 100 ms.
+  A 10 ms peak cutoff would call ~60% of sync responses async. Detector robust: 3/4/5 sigma prominence
+  give 0.33/0.31/0.30 events/ROI. Spont rate ~0.001-0.002 ev/s/ROI (negligible correction).
+- Batch: `compute_sync_async` (all QC-passed ROIs; the detector is the gate) -> per coverslip x ISI
+  P(sync) P1/P2, sync PPF, async events/ROI and /s (spont-subtracted), async PPF (equal windows only),
+  async share of P2 events, mean event rise. Figure `plot_handles.sync_async`, summary block, CSV
+  `twoap_sync_async_per_coverslip.csv`, per-ROI CSV gains n_sync1/n_async1/n_sync2/n_async2/n_spont.
+  Test: `tests/test_twoap_sync_async_events.m`.
+- First look (3fast NGR, pilot N): sync PPF 1.8 @30 ms -> ~1 @120 -> 0.5-0.7 @>=250 (same shape as
+  amplitude PPR); async after P2 rises steeply at short ISI (WT 3.1/s @30 vs ~0.2/s @>=250; async share
+  of P2 events 0.37 -> 0.05-0.09). WT and R213W overlap.
+- Caveats: at short ISI the P2 async bin also holds late pulse-1 async events and possibly pulse-2
+  sync peaks delayed by riding on pulse-1's decay. async PPF is a ratio of a few events per coverslip
+  (noisy, 0.2-8). P(sync) is per ROI, so ROI segmentation (boutons per ROI) affects it.
+- Example-trace figure `plot_handles.sync_async_ex` (2026-10-16): per group, seeded random ROIs with
+  async events + sync-only ROIs (`visualization.montage.twoAP_sync_async_rois = [8 4]`), markers =
+  the analyzer's own events, gap between pulse windows cut out at long ISI.
+- Short-ISI P2 async (2026-10-16): the largest P2 event per ROI lands past 30 ms in 13-34% of ROIs at
+  ISI <= 120 ms vs 2-9% at >= 250 ms. **Resolved by the avg-trace check**: decay-subtracted P2 avg
+  trace (all QC ROIs) peaks at 14-20 ms at EVERY ISI (= P1, 16-17 ms; 50% rise 3-7 ms), but its
+  centroid moves 29-35 -> 39-48 ms and the area share after 30 ms 0.40-0.52 -> 0.56-0.69 at ISI 30-90.
+  So the sync peak does not shift; short ISI adds LATE charge = real extra late release (residual Ca),
+  not a delayed sync peak.
+
+### CHANGED 2026-10-16: sync / async binned on event ONSET <= 10 ms (user)
+- 3fast kinetics from these data (pulse-1 avg trace, ISI >= 250, per coverslip): time to peak 15-20 ms,
+  10-90% rise 12-14 ms, half-decay 16-20 ms, single-exp tau 18-22 ms, FWHM 28-32 ms (upper bounds:
+  5 ms frame integration + release jitter). Peak-aligned isolated single events are NOT usable (aligning
+  thresholded noisy events on their max makes a 1-frame spike; only 11 isolated spont events).
+- Onset = first frame of the final climb above `events.onset_frac` (0.2) of trough -> peak, trough =
+  lowest frame in `events.onset_trough_ms` (25) before the peak, not past the previous event. The first
+  try (nearest local min before the peak) put the onset at the last noise dip of a jagged rise
+  (often = peak frame) -> biased async. `sync_cutoff_ms` = 10 (2 frames). Event lists carry `onset_ms`;
+  histograms are onset latency; example figure marks the onset frame (open square + faint line).
+- Effect (3fast NGR): P(sync) P1 ~0.15-0.27 (was 0.2-0.4 with peak <= 30); async share of P2 events
+  0.18-0.28 at ISI >= 250, 0.37-0.61 at ISI <= 120; sync PPF shape unchanged (1.8-1.9 @30 -> 0.6-0.8
+  @>=250). Onset histogram: high at 0-5 ms, a 10-25 ms shoulder, then a ~10x drop near 30 ms to a flat
+  tail -> most "async" events are the 10-25 ms shoulder. At 5 ms frames onset is +-1 frame, so events
+  rising ~10 ms land on either side of the cutoff.
+
 ---
 
 ## TODO next session

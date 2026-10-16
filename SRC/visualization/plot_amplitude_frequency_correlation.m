@@ -114,14 +114,14 @@ function fig = plot_amplitude_frequency_correlation(results, options)
         fit_wt = polyfit(wt_freq, wt_amp, 1);
         x_fit = linspace(min(wt_freq), max(wt_freq), 100);
         y_fit_wt = polyval(fit_wt, x_fit);
-        plot(x_fit, y_fit_wt, 'b-', 'LineWidth', 2, 'HandleVisibility', 'off');
+        plot(x_fit, y_fit_wt, '-', 'Color', colA, 'LineWidth', 2, 'HandleVisibility', 'off');
     end
     
     if length(mut_freq) > 10
         fit_mut = polyfit(mut_freq, mut_amp, 1);
         x_fit = linspace(min(mut_freq), max(mut_freq), 100);
         y_fit_mut = polyval(fit_mut, x_fit);
-        plot(x_fit, y_fit_mut, 'r-', 'LineWidth', 2, 'HandleVisibility', 'off');
+        plot(x_fit, y_fit_mut, '-', 'Color', colB, 'LineWidth', 2, 'HandleVisibility', 'off');
     end
     
     %% Summary text box

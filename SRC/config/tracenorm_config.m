@@ -95,7 +95,7 @@ function config = tracenorm_config()
     config.groups = struct( ...
         'name',    {'WT',              'Doc2b-WT',      'Doc2b-R213W',      'R213W'}, ...
         'pattern', {'(^|_)WT(_|$)',    'Doc2b[-_]WT',   'Doc2b[-_]R213W',   '(^|_)R213W(_|$)'}, ...
-        'color',   {[0.3 0.3 0.3],     [0.2 0.6 1.0],   [1.0 0.4 0.2],      [0.8 0.2 0.6]});
+        'color',   {[0.6 0.6 0.6],     [0 0 0],         [0.85 0.1 0.1],     [0.8 0.2 0.6]});
 
     % DERIVED - do not edit. Legacy wt/mut colour aliases for older plotters;
     % config.groups is the source of truth (use color_for/parse_group). Default
@@ -130,13 +130,21 @@ function config = tracenorm_config()
     config.oneAP = struct();
     config.oneAP.epoch_pre_ms       = 1000;     % Pre-stim baseline kept per trial epoch
     config.oneAP.epoch_post_ms      = 1500;     % Post-stim trace kept per trial epoch
-    config.oneAP.sync_window_ms     = [0, 10];  % Synchronous release window (timing label)
-    config.oneAP.async_window_ms    = [10, 250];% Asynchronous release window (timing label)
+    config.oneAP.sync_window_ms     = [0, 10];  % Sync AUC window (auc_sync). Sync/async EVENT counts
+                                                % use the 2AP detector + config.twoAP.events instead
+                                                % (onset-binned; this window is only the qc_category
+                                                % label fallback at frames slower than max_frame_ms).
+    config.oneAP.async_window_ms    = [10, 250];% Async AUC start + responder peak-search end (250 ms)
                                                 % Evoked iGlu peak lands ~15-35 ms post-stim
                                                 % (median ~25 ms), so the responder call and
                                                 % amplitude use the LARGEST peak, not the sync window.
     config.oneAP.bin_size_ms        = 5;        % Temporal (PSTH) histogram bin
-    config.oneAP.auc_window_ms      = [0, 250]; % Area-under-curve window (baseline-subtracted)
+    config.oneAP.auc_window_ms      = [0, 500]; % Area-under-curve window (baseline-subtracted). The END
+                                                % also sets the 2AP charge window (twoAP.auc_post_ms) so
+                                                % 1AP and 2AP charge are integrated over the same tail.
+                                                % Longer than async_window_ms on purpose: the event /
+                                                % responder search stays at 250 ms, while auc_async
+                                                % runs from async start to this end (sync + async = auc).
     config.oneAP.tau_peak_window_ms = 50;       % Decay-onset peak searched in [0, this] post-stim
     config.oneAP.tau_min_r2         = 0.5;      % Min fit R^2 to keep a decay tau
     config.oneAP.baseline_guard_ms  = 100;        % Time before stim dropped from baseline (settling)
@@ -169,20 +177,64 @@ function config = tracenorm_config()
     config.twoAP.isi_pattern        = 'PPF[\s_\-]*0*(\d+)\s*ms';  % ISI in filename (cross-check only)
     config.twoAP.peak_search_ms     = 40;       % Search [0, this] ms after each stim for that pulse's peak
                                                 % (capped at the ISI for pulse 1 so it can't reach pulse 2).
-    config.twoAP.auc_post_ms        = 250;      % AUC = TOTAL CHARGE over ONE window that encompasses BOTH
+    config.twoAP.auc_post_ms        = config.oneAP.auc_window_ms(2);
+                                                % AUC = TOTAL CHARGE over ONE window that encompasses BOTH
                                                 % pulses: [stim1, stim2 + this]. A single pre-stim1 baseline
                                                 % is used throughout (no per-pulse residual), so the metric is
                                                 % the total glutamate charge of the paired response (dF/F*ms),
-                                                % NOT a ratio. 250 ms matches the 1AP auc window and captures
-                                                % the full iGluSnFR3fast decay after pulse 2 while staying
-                                                % inside the 600-frame trace at the longest ISI (stim2~=466 ->
-                                                % +50 frames = 516). NB the window length = ISI + this, so it
+                                                % NOT a ratio. Tied to the 1AP AUC window end (edit it there)
+                                                % so the slow tail after pulse 2 is fully back to baseline, while
+                                                % staying inside the 600-frame trace at the longest ISI
+                                                % (stim2~=466 -> +100 frames = 566; the hard ceiling is
+                                                % ~670 ms, beyond which the window is silently clipped at
+                                                % the trace end). NB the window length = ISI + this, so it
                                                 % grows with ISI by construction: raw charge is ISI-dependent
                                                 % (interpret cross-ISI accordingly; no normalization applied).
     config.twoAP.sync_latency_ms    = 10;       % "Sync time-lock" PPR: read BOTH pulses at this fixed
                                                 % latency post-stim (the synchronous-release phase, before
                                                 % the peak). See the three PPR methods in twoap_analyzer.
-    config.twoAP.residual_window_ms = 10;       % Pulse-2 local baseline ("residual") = mean of the
+    % Sync / async event binning (twoap_sync_async_events) - ALSO used by 1AP
+    % (one window [stim, stim + async_window_ms]): every event (local max
+    % >= upper threshold, Schmitt run, rising >= min_prominence_sigma above the
+    % trough before it) in a window after each pulse, binned by latency. Pulse-1
+    % window = [stim1, min(stim2 - 1 frame, stim1 + async_window_ms)]; pulse-2
+    % window = [stim2, stim2 + async_window_ms]. The pre-stim1 baseline gives the
+    % spontaneous event rate that is subtracted from the async counts.
+    config.twoAP.events = struct();
+    config.twoAP.events.sync_cutoff_ms       = 10;   % Event ONSET latency <= this = SYNC (rounded
+                                                     % to frames: 2 frames at 5 ms), later = ASYNC.
+                                                     % Onset = first frame of the final climb above
+                                                     % onset_frac of trough -> peak. Binned on onset, not peak:
+                                                     % 3fast evoked responses rise ~12 ms (10-90%)
+                                                     % and peak 15-20 ms after the stim (3fast NGR
+                                                     % pulse-1 avg traces, 2026-10-16).
+    config.twoAP.events.onset_trough_ms      = 25;   % Onset trough = lowest frame within this
+                                                     % before the peak (2x the ~12 ms rise; never
+                                                     % past the previous event).
+    config.twoAP.events.onset_frac           = 0.2;  % Onset = first frame of the final climb above
+                                                     % this fraction of trough -> peak (robust to a
+                                                     % one-frame noise dip part-way up the rise).
+    config.twoAP.events.async_window_ms     = 100;  % Window after each pulse (pulse 1 also
+                                                     % stops one frame before stim2).
+    config.twoAP.events.min_prominence_sigma = 5;    % An event must rise this many sd above the
+                                                     % trough before it. Guards against noise
+                                                     % wiggles on a decaying sync response being
+                                                     % counted as async events.
+    config.twoAP.events.max_frame_ms         = 6;    % Only bin when frames are <= this: the sync
+                                                     % bin needs >= 2 frames and fast kinetics
+                                                     % (iGluSnFR3fast at 5 ms). Slower sensors /
+                                                     % 10 ms frames: skipped (async merges into
+                                                     % the sync decay).
+    config.twoAP.amp_window_ms      = [5 20];   % "Window mean" amplitude (PPR diagnostic): mean dF/F over
+                                                % [this(1), this(2)] ms after each stim (rounded to frames;
+                                                % pulse-1 window capped one frame before stim2). Averages
+                                                % frames instead of taking a max, so no noise-max inflation.
+    config.twoAP.decay_template_min_frac = 0.05; % "Decay-subtracted" A2: pulse 1's tail under pulse 2 is
+                                                % projected from the group's longest-ISI pulse-1 waveform.
+                                                % Once that template has fallen below this fraction of its
+                                                % peak at the residual window, pulse 1 is treated as decayed
+                                                % (flat residual, same as peak-max).
+    config.twoAP.residual_window_ms = 10;      % Pulse-2 local baseline ("residual") = mean of the
                                                 % trace over the last this-many ms before stim2
                                                 % (rounded to frames, >= 1 frame; never reaches back
                                                 % to stim1). 10 ms = 2 frames at 5 ms, 1 frame at 10 ms.
@@ -191,7 +243,7 @@ function config = tracenorm_config()
     config.twoAP.baseline_guard_ms  = 100;        % Time before stim1 dropped from baseline
     config.twoAP.tau_peak_window_ms = 50;       % Decay-onset peak window (post-stim2)
     config.twoAP.tau_min_r2         = 0.5;
-    config.twoAP.upper_threshold_sigma  = 3.5;  % Responder threshold (peak must clear this)
+    config.twoAP.upper_threshold_sigma  = 5;  % Responder threshold (peak must clear this)
     config.twoAP.lower_threshold_sigma  = 1.5;  % Schmitt decay threshold (hysteresis)
     config.twoAP.min_frames_above_lower = 2;    % Schmitt validation (SAME as 1AP): after the peak
                                                 % clears the UPPER threshold, the run of frames >= the
@@ -261,6 +313,42 @@ function config = tracenorm_config()
     config.hfs.max_noise_sd          = 0.02;  % Drop ROIs whose pre-stim robust SD exceeds this
 
     %% ======================================================================
+    %% Deconvolution event detection (tracenorm/deconv_events.m) - EXPERIMENTAL
+    %% ======================================================================
+    % Band-pass -> deconvolve the unitary response exp(-t/tau) -> band-pass,
+    % then sigma_BN from a Gaussian fit to the deconvolved all-points histogram
+    % and events = local maxima above theta_sigma * sigma_BN (Nat Commun 2022,
+    % doi:10.1038/s41467-022-31070-4; their values: 0.5-30 Hz, tau 68 ms, 4 sigma).
+    % Not used by the pipelines yet; tests/compare_deconv_noise.m compares it
+    % with the pre-stim MAD SD and the Schmitt responder gate.
+    config.deconv = struct();
+    config.deconv.tau_ms = struct( ...           % Unitary kernel per sensor (ms). The
+        'pattern',     {'3fast', 'snfr4|4f'}, ...% pattern is matched (case-insensitive)
+        'tau_ms',      {NaN,     NaN}, ...       % against the sensor / file name.
+        'tau_rise_ms', {NaN,     NaN});          % tau_ms = decay, tau_rise_ms = rise
+                                                 % (0 = instantaneous rise, AR(1) as in
+                                                 % the paper; > 0 = AR(2) inverse).
+                                                 % NaN = measure from the data (rise-decay
+                                                 % fit to the grand-average pulse 1,
+                                                 % compare_deconv_noise), then write it here.
+    config.deconv.band_hz             = [0.5 20];  % Band-pass edges (-3 dB, Hz). Paper: 30 Hz.
+                                                   % 20 Hz recovers near-threshold responders
+                                                   % (SF4f 10 ms: Schmitt-only misses 323 -> 154)
+                                                   % at the same sham false-positive rate
+                                                   % (2026-10-15 PPF sweep); lower = smoother,
+                                                   % so check short-ISI separation
+                                                   % (tests/check_deconv_isi_separation.m).
+    config.deconv.max_hi_frac_nyquist = 0.8;       % Upper edge capped at this x Nyquist
+                                                   % (5 ms: 100 Hz, 10 ms: 50 Hz, 25 ms: 20 Hz
+                                                   % -> 20 Hz becomes 16 Hz for spont).
+    config.deconv.theta_sigma         = 4;         % Event threshold, in sigma_BN
+    config.deconv.hist_core_sigma     = 2;         % Gaussian fitted to |x - median| <= this
+                                                   % many MAD-sigma (keeps the event tail out)
+    config.deconv.hist_bins           = 41;        % Histogram bins over that core
+    config.deconv.min_peak_distance_ms = 10;       % Min spacing between deconvolved events
+                                                   % (SAME as oneAP/twoAP findpeaks spacing)
+
+    %% ======================================================================
     %% Baseline (spontaneous rolling-median path)
     %% ======================================================================
     config.baseline_method       = 'iterative_rolling_median';
@@ -323,6 +411,11 @@ function config = tracenorm_config()
     config.visualization.y_min_zero      = true;
     config.visualization.ymin_montage    = -0.02;   % per-ROI trace montages / example traces
     config.visualization.ymin_mean_trace = -0.005;  % group / coverslip mean traces
+    % Average-trace figures (1AP / 2AP coverslip averages, HFS traces) put all
+    % panels on one y-scale = the largest trace plotted (share_ylim). true also
+    % links the panels, so zooming / panning y in one moves them all; false
+    % keeps the shared limits but lets each panel zoom on its own.
+    config.visualization.link_trace_axes = false;
     % Corner label (annotate_figure_info), e.g.
     %   "Snfr4f | 2026-10-06 | Frame time: 10 ms (100 Hz)"
     % Sensor + experiment date go on every figure; they are read from the data
@@ -363,13 +456,18 @@ function config = tracenorm_config()
     config.visualization.montage.oneAP_max_rois          = 24;   % 1AP montage (responders first)
     config.visualization.montage.oneAP_marginal_max_rois = 24;   % 1AP marginal-responder montage
     config.visualization.montage.twoAP_max_rois          = 20;   % 2AP method-comparison montage
+    config.visualization.montage.twoAP_sync_async_rois   = [8 4]; % 2AP sync/async examples per group:
+                                                                 % [ROIs with >= 1 async event, sync-only
+                                                                 % ROIs], seeded random sample (not the
+                                                                 % biggest events), all ISIs
     config.visualization.montage.oneAP_ylim     = [-0.02 0.06];  % Shared dF/F y-range ([] = auto per panel);
                                                                  % the top rises for traces that go above it
     config.visualization.montage.oneAP_pre_ms   = 150;  % Default window shown before the stim (resting noise)
     config.visualization.montage.oneAP_post_extra_ms = 150;   % ...and after the async window end
                                                              % (x_axis.montage_range_frames overrides both)
     config.visualization.montage.twoAP_pre_ms   = 250;  % 2AP montage: ms shown BEFORE stim1 (baseline/noise)
-    config.visualization.montage.twoAP_post_ms  = 300;  % ...and AFTER stim2 (full decay)
+    config.visualization.montage.twoAP_post_ms  = 550;  % ...and AFTER stim2 (full decay; >= twoAP.auc_post_ms
+                                                        % so the whole charge window is visible)
 
     % --- Spontaneous figures ---------------------------------------------------
     config.visualization.spont = struct();

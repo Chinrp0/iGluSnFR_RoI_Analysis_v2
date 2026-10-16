@@ -20,7 +20,7 @@ function fig = plot_condition_roi_traces(results, options)
     end
     
     % Plotting-preference defaults
-    if ~isfield(options, 'event_color'), options.event_color = [1, 0, 0]; end  % Red
+    if ~isfield(options, 'event_color'), options.event_color = [1, 0, 0]; end  % Red (counted events)
     if ~isfield(options, 'trace_color'), options.trace_color = [0, 0, 0]; end  % Black
     if ~isfield(options, 'show_thresholds'), options.show_thresholds = true; end
     if ~isfield(options, 'ymin'), options.ymin = -0.02; end   % y floor (apply_ymin_zero)
@@ -290,7 +290,7 @@ function plot_single_roi_trace(roi_data, file_data, options, condition, category
     plot(time_vector, trace, 'Color', options.trace_color, 'LineWidth', 1.0);
     hold on;
     
-    % Highlight events in red
+    % Highlight counted events (red by default)
     if any(events)
         event_trace = trace;
         event_trace(~events) = NaN;
@@ -307,6 +307,7 @@ function plot_single_roi_trace(roi_data, file_data, options, condition, category
     yline(0, 'k:', 'Alpha', 0.5, 'LineWidth', 0.8);
     
     % Formatting
+    xlim([-1, numFrames / options.frame_rate + 1]);
     xlabel('Time (s)', 'FontSize', 10);
     ylabel('dF/F', 'FontSize', 10);
     
@@ -318,8 +319,9 @@ function plot_single_roi_trace(roi_data, file_data, options, condition, category
         else
             value_str = sprintf('peak %.4f dF/F', target_info.value);
         end
-        title_str = sprintf('%s\n%s\nROI %d (%s)', condition, category, ...
-            target_info.global_roi, value_str);
+        % recording ID + ROI = data column in that recording's CSV (traceable)
+        title_str = sprintf('%s\n%s\n%s ROI%d (%s)', condition, category, ...
+            recording_id(target_info.filename), target_info.local_roi, value_str);
     else
         title_str = sprintf('%s\n%s\nNo data', condition, category);
     end
